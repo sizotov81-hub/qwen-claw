@@ -123,15 +123,12 @@ func (m *Manager) Init() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	
-	// Создаём директорию
 	if err := os.MkdirAll(m.dataDir, 0755); err != nil {
 		return fmt.Errorf("failed to create memory directory: %w", err)
 	}
 	
-	// Загружаем конфигурацию если есть
 	m.loadConfig()
 	
-	// Инициализируем БД
 	if err := m.initDatabase(); err != nil {
 		return fmt.Errorf("failed to init database: %w", err)
 	}
@@ -140,7 +137,6 @@ func (m *Manager) Init() error {
 		return fmt.Errorf("failed to init association database: %w", err)
 	}
 	
-	// Загружаем working memory
 	if err := m.loadWorkingMemory(); err != nil {
 		return fmt.Errorf("failed to load working memory: %w", err)
 	}
@@ -188,7 +184,6 @@ func (m *Manager) initDatabase() error {
 	
 	m.db = db
 	
-	// Создаём таблицы
 	schema := `
 	-- Основная таблица записей
 	CREATE TABLE IF NOT EXISTS memory_entries (
@@ -299,7 +294,6 @@ func (m *Manager) initAssociationDB() error {
 
 // loadWorkingMemory загружает working memory из БД
 func (m *Manager) loadWorkingMemory() error {
-	// Загружаем последние активные чанки
 	query := `
 		SELECT id, name, created_at, last_used 
 		FROM chunks 
@@ -326,7 +320,6 @@ func (m *Manager) loadWorkingMemory() error {
 		chunk.LastUsed = time.Unix(lastUsed, 0)
 		chunk.Entries = make([]*Entry, 0)
 		
-		// Загружаем записи чанка
 		entries, err := m.getChunkEntries(chunk.ID)
 		if err != nil {
 			return err
