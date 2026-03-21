@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 )
 
 // Manager менеджер памяти с нейробиологической архитектурой
@@ -181,7 +181,7 @@ func (m *Manager) saveConfig() error {
 func (m *Manager) initDatabase() error {
 	dbPath := filepath.Join(m.dataDir, "memory.db")
 	
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		return err
 	}
@@ -258,7 +258,7 @@ func (m *Manager) initDatabase() error {
 func (m *Manager) initAssociationDB() error {
 	dbPath := filepath.Join(m.dataDir, "associations.db")
 	
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		return err
 	}
