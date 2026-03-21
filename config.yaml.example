@@ -1,0 +1,36 @@
+# Qwen-Claw Configuration
+# Приватные данные (токены, ключи) хранятся в .env файле
+
+# Базовая директория проекта
+base_dir: /home/ss/qwen-claw
+
+# Директория для данных Qwen
+qwen_dir: /home/ss/qwen-claw/.qwen
+
+# Директория для навыков
+skills_dir: /home/ss/qwen-claw/skills
+
+# Директория для памяти
+memory_dir: /home/ss/qwen-claw/.qwen/memory
+
+# Настройки сервера
+server:
+  enabled: true
+  host: 127.0.0.1
+  port: 18789
+
+# Настройки Telegram бота
+# Токен и allowed_users хранятся в .env файле
+telegram:
+  enabled: false
+
+# Настройки Qwen Code CLI
+llm:
+  # Модель (оставьте пустым для модели по умолчанию)
+  model: ""
+  
+  # Режим подтверждения: plan, default, auto-edit, yolo
+  approval_mode: auto-edit
+  
+  # Режим отладки
+  debug: false

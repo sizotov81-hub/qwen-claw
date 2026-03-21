@@ -1,0 +1,8 @@
+{
+  "name": "example",
+  "description": "Пример навыка для демонстрации",
+  "type": "script",
+  "entry_point": "main.sh",
+  "commands": ["example", "demo", "test"],
+  "enabled": true
+}

@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Qwen-Claw Web UI - Secure Access</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <!-- Экран аутентификации -->
+    <div id="auth-screen" class="auth-container">
+        <div class="auth-box">
+            <div class="logo">🔐</div>
+            <h2>Qwen-Claw Web UI</h2>
+            <p class="subtitle">Secure Access</p>
+            
+            <div id="auth-error" class="auth-error"></div>
+            
+            <form id="auth-form" class="auth-form">
+                <input type="text" id="secret-input" placeholder="Secret Phrase" autocomplete="off" required>
+                <button type="submit">🔓 Authenticate</button>
+            </form>
+            
+            <p style="text-align: center; margin-top: 20px; color: var(--text-secondary); font-size: 0.8rem;">
+                Enter your secret phrase to access the Web UI
+            </p>
+        </div>
+    </div>
+
+    <!-- Основной интерфейс -->
+    <div id="main-app" class="container">
+        <!-- Боковая панель -->
+        <aside class="sidebar">
+            <div class="logo">
+                <h1>🤖 Qwen-Claw</h1>
+            </div>
+            <nav class="nav">
+                <button class="nav-btn active" data-tab="chat">💬 Чат</button>
+                <button class="nav-btn" data-tab="memory">🧠 Память</button>
+                <button class="nav-btn" data-tab="tasks">📋 Задачи</button>
+                <button class="nav-btn" data-tab="skills">🛠️ Навыки</button>
+                <button class="nav-btn" data-tab="status">📊 Статус</button>
+            </nav>
+            <div class="connection-status">
+                <span id="ws-status" class="status-dot"></span>
+                <span id="ws-text">Подключение...</span>
+            </div>
+            <button id="logout-btn" class="btn btn-danger" style="margin-top: 10px;">🚪 Выход</button>
+        </aside>
+
+        <!-- Основной контент -->
+        <main class="content">
+            <!-- Чат -->
+            <section id="chat" class="tab active">
+                <div class="chat-container">
+                    <div id="chat-messages" class="chat-messages"></div>
+                    <div class="chat-input-container">
+                        <input type="text" id="chat-input" placeholder="Введите запрос..." autocomplete="off">
+                        <button id="send-btn" class="send-btn">➤</button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Память -->
+            <section id="memory" class="tab">
+                <div class="tab-header">
+                    <h2>🧠 Память</h2>
+                    <button id="add-memory-btn" class="btn btn-primary">+ Добавить</button>
+                    <button id="clear-memory-btn" class="btn btn-danger">Очистить всё</button>
+                </div>
+                <div id="memory-list" class="list"></div>
+            </section>
+
+            <!-- Задачи -->
+            <section id="tasks" class="tab">
+                <div class="tab-header">
+                    <h2>📋 Задачи</h2>
+                    <button id="add-task-btn" class="btn btn-primary">+ Добавить</button>
+                </div>
+                <div id="tasks-list" class="list"></div>
+            </section>
+
+            <!-- Навыки -->
+            <section id="skills" class="tab">
+                <h2>🛠️ Навыки</h2>
+                <div id="skills-list" class="list"></div>
+            </section>
+
+            <!-- Статус -->
+            <section id="status" class="tab">
+                <h2>📊 Статус системы</h2>
+                <div id="status-content" class="status-grid"></div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Модальное окно для добавления -->
+    <div id="modal" class="modal">
+        <div class="modal-content">
+            <span class="close">&times;</span>
+            <h3 id="modal-title"></h3>
+            <form id="modal-form"></form>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

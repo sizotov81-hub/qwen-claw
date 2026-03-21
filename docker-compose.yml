@@ -1,0 +1,76 @@
+version: '3.8'
+
+services:
+  qwen-claw:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: qwen-claw:latest
+    container_name: qwen-claw
+    restart: unless-stopped
+
+    # Переменные окружения
+    environment:
+      - TZ=Europe/Moscow
+      - QWEN_CLAW_TELEGRAM_TOKEN=${QWEN_CLAW_TELEGRAM_TOKEN:-}
+      - QWEN_CLAW_TELEGRAM_ALLOWED_USERS=${QWEN_CLAW_TELEGRAM_ALLOWED_USERS:-}
+      - QWEN_CLAW_MODEL=${QWEN_CLAW_MODEL:-}
+      - QWEN_CLAW_APPROVAL_MODE=${QWEN_CLAW_APPROVAL_MODE:-auto-edit}
+      - QWEN_CLAW_DEBUG=${QWEN_CLAW_DEBUG:-false}
+
+    # Монтирование томов для сохранения данных
+    volumes:
+      # Конфигурация
+      - ./config.yaml:/app/config.yaml:ro
+      - ./.env:/app/.env:ro
+      # Данные (память, задачи, история)
+      - qwen-claw-data:/app/.qwen
+      # Логи (опционально)
+      - ./logs:/app/logs
+
+    # Сетевые настройки
+    networks:
+      - qwen-claw-net
+
+    # Ресурсы
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+
+    # Команда запуска (по умолчанию telegram)
+    # Измените на нужную команду:
+    # - telegram (Telegram бот)
+    # - run "ваш запрос" (одиночный запрос)
+    # - chat (интерактивный чат)
+    command: ["telegram"]
+
+    # Health check
+    healthcheck:
+      test: ["CMD", "/app/qwen-claw", "doctor"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+    # Логи
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+# Сеть
+networks:
+  qwen-claw-net:
+    driver: bridge
+
+# Тома
+volumes:
+  qwen-claw-data:
+    driver: local
+    name: qwen-claw-data
