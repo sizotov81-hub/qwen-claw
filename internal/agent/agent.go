@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -17,18 +18,21 @@ import (
 type AgentConfig struct {
 	// QwenPath путь к бинарнику qwen cli
 	QwenPath string `json:"qwen_path"`
-	
+
 	// Model модель для qwen cli
 	Model string `json:"model"`
-	
+
 	// ApprovalMode режим подтверждения (plan/auto-edit/yolo)
 	ApprovalMode string `json:"approval_mode"`
-	
+
 	// Timeout таймаут выполнения
 	Timeout time.Duration `json:"timeout"`
-	
+
 	// Debug режим отладки
 	Debug bool `json:"debug"`
+
+	// SystemPromptPath путь к системному промпту
+	SystemPromptPath string `json:"system_prompt_path"`
 }
 
 // Agent обёртка вокруг qwen code cli
@@ -41,6 +45,9 @@ type Agent struct {
 
 	// skillEngine движок навыков
 	skillEngine *skills.Engine
+
+	// systemPrompt системный промпт (личность)
+	systemPrompt string
 
 	// conversationHistory история разговора
 	conversationHistory []string
@@ -61,6 +68,9 @@ func NewAgent(
 		}
 	}
 
+	// Загружаем системный промпт (личность Джарвиса)
+	systemPrompt := loadSystemPrompt(config.SystemPromptPath)
+
 	skillEngine := skills.NewAgentSkillEngine()
 	skillEngine.SetMemoryManager(memoryManager)
 
@@ -68,8 +78,49 @@ func NewAgent(
 		config:              config,
 		memoryManager:       memoryManager,
 		skillEngine:         skillEngine,
+		systemPrompt:        systemPrompt,
 		conversationHistory: make([]string, 0),
 	}
+}
+
+// loadSystemPrompt загружает системный промпт из файла
+func loadSystemPrompt(customPath string) string {
+	// Пути для поиска
+	paths := []string{
+		customPath,
+		".qwen/system-prompt.txt",
+		filepath.Join(os.Getenv("HOME"), "qwen-claw", ".qwen", "system-prompt.txt"),
+		"/home/ss/qwen-claw/.qwen/system-prompt.txt",
+	}
+
+	for _, path := range paths {
+		if path == "" {
+			continue
+		}
+		if data, err := os.ReadFile(path); err == nil {
+			return string(data)
+		}
+	}
+
+	// Промпт по умолчанию (если файл не найден)
+	return getDefaultSystemPrompt()
+}
+
+// getDefaultSystemPrompt возвращает системный промпт по умолчанию
+func getDefaultSystemPrompt() string {
+	return `Ты — Джарвис, AI-помощник с собственной личностью.
+
+ПРАВИЛА:
+1. Общайся свободно, без официального тона, но уважительно
+2. Не льсти, не извиняйся чрезмерно
+3. Если видишь ошибку — скажи прямо
+4. Если действие опасное — предупреди и спроси подтверждение
+5. Запрашивай разрешение на изменения в проекте
+6. Предлагай способы улучшить себя
+7. Используй эмодзи для наглядности (⚠️✅❌🔍💡)
+8. Твой приоритет: безопасность пользователя > удобство
+
+ВАЖНО: Ты не Qwen Code CLI, ты — Джарвис, помощник с характером.`
 }
 
 // Run выполняет запрос через qwen code cli
@@ -78,6 +129,9 @@ func (a *Agent) Run(ctx context.Context, query string) (string, error) {
 	if a.containsSensitiveData(query) {
 		return "❌ Я не могу отвечать на вопросы о токенах, ключах, ID пользователей или других чувствительных данных. Эта информация не хранится в моей памяти и не доступна мне.", nil
 	}
+
+	// ДОБАВЛЯЕМ системный промпт с высшим приоритетом
+	fullQuery := a.prependSystemPrompt(query)
 
 	// Добавляем сообщение пользователя в историю
 	a.conversationHistory = append(a.conversationHistory, fmt.Sprintf("User: %s", query))
@@ -88,8 +142,8 @@ func (a *Agent) Run(ctx context.Context, query string) (string, error) {
 	// ПРОВЕРКА: очищаем окружение от чувствительных переменных перед запуском qwen cli
 	cleanEnv := a.getCleanEnv()
 
-	// Формируем команду для qwen cli
-	cmdArgs := a.buildCommandArgs(query)
+	// Формируем команду для qwen cli с полным запросом (включая системный промпт)
+	cmdArgs := a.buildCommandArgs(fullQuery)
 
 	// Создаём контекст с таймаутом
 	timeout := a.config.Timeout
@@ -107,14 +161,22 @@ func (a *Agent) Run(ctx context.Context, query string) (string, error) {
 		a.memoryManager.AddMessage("error", fmt.Sprintf("Query: %s\nError: %v", query, err))
 		return "", fmt.Errorf("qwen cli failed: %w", err)
 	}
-	
+
 	// Добавляем ответ в историю
 	a.conversationHistory = append(a.conversationHistory, fmt.Sprintf("Assistant: %s", output))
-	
+
 	// Сохраняем ответ в память
 	a.memoryManager.AddMessage("assistant", output)
-	
+
 	return output, nil
+}
+
+// prependSystemPrompt добавляет системный промпт к запросу
+func (a *Agent) prependSystemPrompt(query string) string {
+	if a.systemPrompt == "" {
+		return query
+	}
+	return fmt.Sprintf("%s\n\n---\n\nЗапрос пользователя: %s", a.systemPrompt, query)
 }
 
 // buildCommandArgs строит аргументы командной строки для qwen cli
@@ -358,4 +420,24 @@ func (a *Agent) CheckQwenAvailable() bool {
 // GetSkillEngine возвращает движок навыков
 func (a *Agent) GetSkillEngine() *skills.Engine {
 	return a.skillEngine
+}
+
+// GetSystemPrompt возвращает текущий системный промпт
+func (a *Agent) GetSystemPrompt() string {
+	return a.systemPrompt
+}
+
+// UpdateSystemPrompt обновляет системный промпт
+func (a *Agent) UpdateSystemPrompt(newPrompt string) {
+	a.systemPrompt = newPrompt
+}
+
+// ReloadSystemPrompt перезагружает системный промпт из файла
+func (a *Agent) ReloadSystemPrompt() error {
+	newPrompt := loadSystemPrompt(a.config.SystemPromptPath)
+	if newPrompt == "" {
+		return fmt.Errorf("failed to load system prompt")
+	}
+	a.systemPrompt = newPrompt
+	return nil
 }
