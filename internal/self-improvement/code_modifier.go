@@ -1,12 +1,19 @@
 package selfimprovement
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
+)
+
+var (
+	ErrFileNotFound = errors.New("file not found")
+	ErrContentMismatch = errors.New("file content has changed")
+	ErrGitNotEnabled = errors.New("git not enabled")
 )
 
 // CodeModifier модификатор кода
@@ -29,7 +36,7 @@ func (cm *CodeModifier) ModifyFile(filePath, oldContent, newContent string) erro
 	
 	// Проверяем существование
 	if _, err := os.Stat(fullPath); os.IsNotExist(err) {
-		return fmt.Errorf("file does not exist: %s", filePath)
+		return fmt.Errorf("modify file: %w", ErrFileNotFound)
 	}
 	
 	// Читаем текущее содержимое
@@ -40,7 +47,7 @@ func (cm *CodeModifier) ModifyFile(filePath, oldContent, newContent string) erro
 	
 	// Проверяем, что oldContent совпадает
 	if string(current) != oldContent {
-		return fmt.Errorf("file content has changed, expected != actual")
+		return fmt.Errorf("modify file: %w", ErrContentMismatch)
 	}
 	
 	// Записываем новое
@@ -93,7 +100,7 @@ func (cm *CodeModifier) Build() (bool, string, error) {
 // Commit коммитит изменения
 func (cm *CodeModifier) Commit(message string) error {
 	if !cm.gitEnabled {
-		return fmt.Errorf("git not enabled")
+		return fmt.Errorf("commit changes: %w", ErrGitNotEnabled)
 	}
 	
 	commands := []string{

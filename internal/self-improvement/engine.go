@@ -2,12 +2,18 @@ package selfimprovement
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
+)
+
+var (
+	ErrChangeNotFound = errors.New("change not found")
+	ErrChangeNotPending = errors.New("change is not pending")
 )
 
 // Engine система самосовершенствования
@@ -212,11 +218,11 @@ func (e *Engine) isForbidden(change *ChangeRequest) bool {
 func (e *Engine) Approve(changeID string) error {
 	change := e.findChange(changeID)
 	if change == nil {
-		return fmt.Errorf("change %s not found", changeID)
+		return fmt.Errorf("find change: %w", ErrChangeNotFound)
 	}
 	
 	if change.Status != "pending" {
-		return fmt.Errorf("change %s is not pending (status: %s)", changeID, change.Status)
+		return fmt.Errorf("approve change: %w", ErrChangeNotPending)
 	}
 	
 	// Создаём бэкап если требуется
@@ -239,7 +245,7 @@ func (e *Engine) Approve(changeID string) error {
 func (e *Engine) Reject(changeID string) error {
 	change := e.findChange(changeID)
 	if change == nil {
-		return fmt.Errorf("change %s not found", changeID)
+		return fmt.Errorf("find change: %w", ErrChangeNotFound)
 	}
 	
 	change.Status = "rejected"

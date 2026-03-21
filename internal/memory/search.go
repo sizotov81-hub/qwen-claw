@@ -3,6 +3,7 @@ package memory
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,6 +13,8 @@ import (
 	"strings"
 	"time"
 )
+
+var ErrNoResults = errors.New("no results found")
 
 // SearchResult результат поиска
 type SearchResult struct {
@@ -441,7 +444,7 @@ func extractMainContent(body io.Reader) (string, error) {
 	}
 	
 	if len(results) == 0 {
-		return "", fmt.Errorf("no results found")
+		return "", fmt.Errorf("extract content: %w", ErrNoResults)
 	}
 	
 	return strings.Join(results, "\n\n"), nil
