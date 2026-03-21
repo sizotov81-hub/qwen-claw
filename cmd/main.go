@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"fmt"
-	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,9 +12,10 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/user/qwen-claw/internal/agent"
 	"github.com/user/qwen-claw/internal/config"
+	"github.com/user/qwen-claw/internal/logger"
 	"github.com/user/qwen-claw/internal/memory"
-	"github.com/user/qwen-claw/internal/skills"
 	"github.com/user/qwen-claw/internal/scheduler"
+	"github.com/user/qwen-claw/internal/skills"
 	"github.com/user/qwen-claw/internal/web"
 	"github.com/user/qwen-claw/bots/telegram"
 )
@@ -699,7 +699,7 @@ func doctorCheck(cmd *cobra.Command, args []string) error {
 }
 
 func runTelegramBot(cmd *cobra.Command, args []string) error {
-	log.Println("Loading configuration...")
+	logger.Info("Loading configuration...")
 	
 	// Загружаем конфигурацию
 	cfg, err := config.Load(cfgFile)
@@ -708,11 +708,11 @@ func runTelegramBot(cmd *cobra.Command, args []string) error {
 	}
 
 	// НЕ логируем токен и чувствительные данные!
-	log.Printf("Telegram enabled: %v", cfg.Telegram.Enabled)
+	logger.Infof("Telegram enabled: %v", cfg.Telegram.Enabled)
 	if len(cfg.Telegram.AllowedUsers) > 0 {
-		log.Printf("Access restricted to %d user(s)", len(cfg.Telegram.AllowedUsers))
+		logger.Infof("Access restricted to %d user(s)", len(cfg.Telegram.AllowedUsers))
 	} else {
-		log.Println("Access: open for all users")
+		logger.Info("Access: open for all users")
 	}
 
 	// Проверяем токен
@@ -743,7 +743,7 @@ func runTelegramBot(cmd *cobra.Command, args []string) error {
 
 	// Проверяем доступность qwen cli
 	if !agentInstance.CheckQwenAvailable() {
-		log.Printf("Warning: Qwen Code CLI not found at %s", agentInstance.GetQwenPath())
+		logger.Infof("Warning: Qwen Code CLI not found at %s", agentInstance.GetQwenPath())
 	}
 
 	// Создаём планировщик
@@ -772,21 +772,21 @@ func runTelegramBot(cmd *cobra.Command, args []string) error {
 
 	// Логируем конфигурацию доступа
 	if len(cfg.Telegram.AllowedUsers) > 0 {
-		log.Printf("Access restricted to users: %v", cfg.Telegram.AllowedUsers)
+		logger.Infof("Access restricted to users: %v", cfg.Telegram.AllowedUsers)
 	} else {
-		log.Println("Access: open for all users")
+		logger.Info("Access: open for all users")
 	}
 
 	// Показываем информацию о боте
 	botInfo, err := bot.GetBotInfo()
 	if err != nil {
-		log.Printf("Warning: failed to get bot info: %v", err)
+		logger.Infof("Warning: failed to get bot info: %v", err)
 	} else {
-		log.Printf("Bot username: %s", botInfo)
+		logger.Infof("Bot username: %s", botInfo)
 	}
 
-	log.Println("Starting Telegram bot...")
-	log.Println("Press Ctrl+C to stop")
+	logger.Info("Starting Telegram bot...")
+	logger.Info("Press Ctrl+C to stop")
 
 	// Запускаем бота
 	return bot.Start()
@@ -1349,9 +1349,9 @@ func runWebUI(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to init security: %w", err)
 	}
 
-	log.Printf("🔒 Secure Web UI starting at http://%s:%d", host, port)
-	log.Printf("📝 Use secret phrase for authentication (see .web-secrets.json)")
-	log.Println("Press Ctrl+C to stop")
+	logger.Infof("🔒 Secure Web UI starting at http://%s:%d", host, port)
+	logger.Infof("📝 Use secret phrase for authentication (see .web-secrets.json)")
+	logger.Info("Press Ctrl+C to stop")
 
 	// Инициализируем память
 	memoryManager := memory.NewManager(cfg.MemoryDir)

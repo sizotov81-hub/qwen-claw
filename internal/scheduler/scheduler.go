@@ -445,7 +445,7 @@ func (s *Scheduler) RemoveTask(id string) error {
 	defer s.mu.Unlock()
 
 	if _, ok := s.tasks[id]; !ok {
-		return fmt.Errorf("task not found: %s", id)
+		return fmt.Errorf("task not found: %s", err, id)
 	}
 
 	delete(s.tasks, id)
@@ -459,7 +459,7 @@ func (s *Scheduler) GetTask(id string) (*Task, error) {
 
 	task, ok := s.tasks[id]
 	if !ok {
-		return nil, fmt.Errorf("task not found: %s", id)
+		return nil, fmt.Errorf("task not found: %s", err, id)
 	}
 
 	return task, nil
@@ -496,7 +496,7 @@ func (s *Scheduler) EnableTask(id string) error {
 
 	task, ok := s.tasks[id]
 	if !ok {
-		return fmt.Errorf("task not found: %s", id)
+		return fmt.Errorf("task not found: %s", err, id)
 	}
 
 	task.Enabled = true
@@ -512,7 +512,7 @@ func (s *Scheduler) DisableTask(id string) error {
 
 	task, ok := s.tasks[id]
 	if !ok {
-		return fmt.Errorf("task not found: %s", id)
+		return fmt.Errorf("task not found: %s", err, id)
 	}
 
 	task.Enabled = false
@@ -527,7 +527,7 @@ func (s *Scheduler) RunTaskNow(id string) (*TaskResult, error) {
 	s.mu.RUnlock()
 
 	if !ok {
-		return nil, fmt.Errorf("task not found: %s", id)
+		return nil, fmt.Errorf("task not found: %s", err, id)
 	}
 
 	result := &TaskResult{
