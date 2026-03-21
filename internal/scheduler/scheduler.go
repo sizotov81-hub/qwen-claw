@@ -3,12 +3,18 @@ package scheduler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
+)
+
+// Ошибки планировщика
+var (
+	ErrTaskNotFound = errors.New("task not found")
 )
 
 // TaskStatus статус задачи
@@ -445,7 +451,7 @@ func (s *Scheduler) RemoveTask(id string) error {
 	defer s.mu.Unlock()
 
 	if _, ok := s.tasks[id]; !ok {
-		return fmt.Errorf("task not found: %s", err, id)
+		return fmt.Errorf("remove task: %w", ErrTaskNotFound)
 	}
 
 	delete(s.tasks, id)
@@ -459,7 +465,7 @@ func (s *Scheduler) GetTask(id string) (*Task, error) {
 
 	task, ok := s.tasks[id]
 	if !ok {
-		return nil, fmt.Errorf("task not found: %s", err, id)
+		return nil, fmt.Errorf("get task: %w", ErrTaskNotFound)
 	}
 
 	return task, nil
@@ -496,7 +502,7 @@ func (s *Scheduler) EnableTask(id string) error {
 
 	task, ok := s.tasks[id]
 	if !ok {
-		return fmt.Errorf("task not found: %s", err, id)
+		return fmt.Errorf("enable task: %w", ErrTaskNotFound)
 	}
 
 	task.Enabled = true
@@ -512,7 +518,7 @@ func (s *Scheduler) DisableTask(id string) error {
 
 	task, ok := s.tasks[id]
 	if !ok {
-		return fmt.Errorf("task not found: %s", err, id)
+		return fmt.Errorf("disable task: %w", ErrTaskNotFound)
 	}
 
 	task.Enabled = false
@@ -527,7 +533,7 @@ func (s *Scheduler) RunTaskNow(id string) (*TaskResult, error) {
 	s.mu.RUnlock()
 
 	if !ok {
-		return nil, fmt.Errorf("task not found: %s", err, id)
+		return nil, fmt.Errorf("run task: %w", ErrTaskNotFound)
 	}
 
 	result := &TaskResult{

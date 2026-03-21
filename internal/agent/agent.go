@@ -4,13 +4,13 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/user/qwen-claw/internal/logger"
 	"github.com/user/qwen-claw/internal/memory"
 	"github.com/user/qwen-claw/internal/skills"
 )
@@ -155,7 +155,7 @@ func (a *Agent) Run(ctx context.Context, query string) (string, error) {
 		
 		// Логируем (в debug режиме)
 		if a.config.Debug {
-			log.Printf("🧠 Found in memory (%s, %v): %d entries", 
+			logger.Infof("🧠 Found in memory (%s, %v): %d entries", 
 				searchResult.Source, searchResult.Latency, len(searchResult.Entries))
 		}
 		
@@ -170,7 +170,7 @@ func (a *Agent) Run(ctx context.Context, query string) (string, error) {
 		fullQuery := a.prependSystemPromptWithContext(query, webContext)
 		
 		if a.config.Debug {
-			log.Printf("🌐 Found on web (%v)", searchResult.Latency)
+			logger.Infof("🌐 Found on web (%v)", searchResult.Latency)
 		}
 		
 		return a.executeWithQuery(fullQuery, query, startTime)

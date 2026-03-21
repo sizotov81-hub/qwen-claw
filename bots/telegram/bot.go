@@ -5,7 +5,6 @@ import (
 	"crypto/tls"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -15,6 +14,7 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
 	"github.com/user/qwen-claw/internal/agent"
+	"github.com/user/qwen-claw/internal/logger"
 	"github.com/user/qwen-claw/internal/memory"
 	"github.com/user/qwen-claw/internal/scheduler"
 	"github.com/user/qwen-claw/internal/selfimprovement"
@@ -71,7 +71,7 @@ func NewBot(
 	// Создаём HTTP клиент с поддержкой прокси
 	client, err := createHTTPClient()
 	if err != nil {
-		log.Printf("Warning: failed to create HTTP client: %v", err)
+		logger.Infof("Warning: failed to create HTTP client: %v", err)
 	}
 
 	api, err := tgbotapi.NewBotAPIWithClient(config.Token, tgbotapi.APIEndpoint, client)
@@ -114,7 +114,7 @@ func createHTTPClient() (*http.Client, error) {
 
 	// Если указан прокси, используем его
 	if proxyURL != "" {
-		log.Printf("Using proxy: %s", proxyURL)
+		logger.Infof("Using proxy: %s", proxyURL)
 		proxyParsed, err := url.Parse(proxyURL)
 		if err == nil {
 			transport.Proxy = http.ProxyURL(proxyParsed)
@@ -135,7 +135,7 @@ func (b *Bot) Start() error {
 		return fmt.Errorf("failed to get bot info: %w", err)
 	}
 
-	log.Printf("Telegram bot started: @%s", u.UserName)
+	logger.Infof("Telegram bot started: @%s", u.UserName)
 
 	b.running = true
 
@@ -163,7 +163,7 @@ func (b *Bot) Start() error {
 func (b *Bot) Stop() {
 	b.running = false
 	b.api.StopReceivingUpdates()
-	log.Println("Telegram bot stopped")
+	logger.Info("Telegram bot stopped")
 }
 
 // handleMessage обрабатывает сообщение
@@ -173,7 +173,7 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 		return
 	}
 
-	log.Printf("Message from @%s (ID: %d): %s", msg.From.UserName, msg.From.ID, msg.Text)
+	logger.Infof("Message from @%s (ID: %d): %s", msg.From.UserName, msg.From.ID, msg.Text)
 
 	// Проверяем права доступа
 	if len(b.config.AllowedUsers) > 0 {
@@ -185,11 +185,11 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 			}
 		}
 		if !allowed {
-			log.Printf("❌ Access denied for user %d (@%s)", msg.From.ID, msg.From.UserName)
+			logger.Infof("❌ Access denied for user %d (@%s)", msg.From.ID, msg.From.UserName)
 			b.sendMessage(msg.Chat.ID, fmt.Sprintf("❌ У вас нет доступа к этому боту.\nВаш ID: %d", msg.From.ID))
 			return
 		}
-		log.Printf("✅ Access granted for user %d (@%s)", msg.From.ID, msg.From.UserName)
+		logger.Infof("✅ Access granted for user %d (@%s)", msg.From.ID, msg.From.UserName)
 	}
 
 	// Обрабатываем команды
@@ -584,7 +584,7 @@ func (b *Bot) sendMessage(chatID int64, text string) int {
 
 	result, err := b.api.Send(msg)
 	if err != nil {
-		log.Printf("Failed to send message: %v", err)
+		logger.Infof("Failed to send message: %v", err)
 		return 0
 	}
 	return result.MessageID
@@ -648,7 +648,7 @@ func (b *Bot) splitMessage(text string, maxLen int) []string {
 
 // handleCallbackQuery обрабатывает нажатия на inline-кнопки
 func (b *Bot) handleCallbackQuery(callback *tgbotapi.CallbackQuery) {
-	log.Printf("Callback query from %d: %s", callback.From.ID, callback.Data)
+	logger.Infof("Callback query from %d: %s", callback.From.ID, callback.Data)
 
 	data := callback.Data
 	chatID := callback.Message.Chat.ID
