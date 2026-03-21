@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -132,24 +133,93 @@ func getDefaultSystemPrompt() string {
 
 // Run выполняет запрос через qwen code cli
 func (a *Agent) Run(ctx context.Context, query string) (string, error) {
+	startTime := time.Now()
+	
 	// ПРОВЕРКА: блокируем запросы о чувствительных данных
 	if a.containsSensitiveData(query) {
 		return "❌ Я не могу отвечать на вопросы о токенах, ключах, ID пользователей или других чувствительных данных. Эта информация не хранится в моей памяти и не доступна мне.", nil
 	}
 
-	// ДОБАВЛЯЕМ системный промпт с высшим приоритетом
-	fullQuery := a.prependSystemPrompt(query)
+	// 🔍 ШАГ 1: Ищем в памяти (всегда сначала!)
+	searchResult := a.memoryManager.Find(query, &memory.SearchContext{
+		Timestamp: time.Now(),
+	})
+	
+	// Если нашли в памяти — используем
+	if searchResult.Found && searchResult.Source != "web" {
+		// Формируем ответ с контекстом из памяти
+		context := a.formatMemoryContext(searchResult)
+		
+		// Добавляем системный промпт с контекстом
+		fullQuery := a.prependSystemPromptWithContext(query, context)
+		
+		// Логируем (в debug режиме)
+		if a.config.Debug {
+			log.Printf("🧠 Found in memory (%s, %v): %d entries", 
+				searchResult.Source, searchResult.Latency, len(searchResult.Entries))
+		}
+		
+		// Выполняем запрос с контекстом
+		return a.executeWithQuery(fullQuery, query, startTime)
+	}
+	
+	// 🔍 ШАГ 2: Не нашли в памяти — ищем в интернете (если включено)
+	if searchResult.Source == "web" && searchResult.Found {
+		// Нашли в интернете — сохраняем и используем
+		webContext := fmt.Sprintf("🌐 Найдено в интернете:\n%s", searchResult.WebContent)
+		fullQuery := a.prependSystemPromptWithContext(query, webContext)
+		
+		if a.config.Debug {
+			log.Printf("🌐 Found on web (%v)", searchResult.Latency)
+		}
+		
+		return a.executeWithQuery(fullQuery, query, startTime)
+	}
+	
+	// 🔍 ШАГ 3: Вообще не нашли — выполняем как обычно
+	// Но добавляем подсказку от памяти
+	var context string
+	if searchResult.Suggestion != "" {
+		context = searchResult.Suggestion
+	}
+	
+	fullQuery := a.prependSystemPromptWithContext(query, context)
+	return a.executeWithQuery(fullQuery, query, startTime)
+}
 
+// formatMemoryContext форматирует контекст из памяти
+func (a *Agent) formatMemoryContext(result *memory.SearchResult) string {
+	if len(result.Entries) == 0 {
+		return ""
+	}
+	
+	var sb strings.Builder
+	sb.WriteString("📚 Найдено в памяти:\n\n")
+	
+	for i, entry := range result.Entries {
+		if i >= 5 { // Показываем максимум 5 записей
+			sb.WriteString(fmt.Sprintf("\n... и ещё %d записей", len(result.Entries)-5))
+			break
+		}
+		
+		sb.WriteString(fmt.Sprintf("[%s] %s\n", entry.Type, entry.Content))
+	}
+	
+	return sb.String()
+}
+
+// executeWithQuery выполняет запрос с подготовленным query
+func (a *Agent) executeWithQuery(fullQuery, originalQuery string, startTime time.Time) (string, error) {
 	// Добавляем сообщение пользователя в историю
-	a.conversationHistory = append(a.conversationHistory, fmt.Sprintf("User: %s", query))
+	a.conversationHistory = append(a.conversationHistory, fmt.Sprintf("User: %s", originalQuery))
 
-	// Сохраняем в память
-	a.memoryManager.AddMessage("user", query)
+	// Сохраняем в память (user message)
+	a.memoryManager.AddMessage("user", originalQuery)
 
-	// ПРОВЕРКА: очищаем окружение от чувствительных переменных перед запуском qwen cli
+	// ПРОВЕРКА: очищаем окружение от чувствительных переменных
 	cleanEnv := a.getCleanEnv()
 
-	// Формируем команду для qwen cli с полным запросом (включая системный промпт)
+	// Формируем команду для qwen cli
 	cmdArgs := a.buildCommandArgs(fullQuery)
 
 	// Создаём контекст с таймаутом
@@ -158,14 +228,20 @@ func (a *Agent) Run(ctx context.Context, query string) (string, error) {
 		timeout = 5 * time.Minute
 	}
 
+	ctx := context.Background()
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	// Запускаем qwen cli с очищенным окружением
+	// Запускаем qwen cli
 	output, err := a.executeQwen(ctx, cmdArgs, cleanEnv)
+	
+	// Записываем метрики в антидеградацию
+	duration := time.Since(startTime)
+	a.RecordTaskMetric(originalQuery, duration, 1, nil, err == nil)
+	
 	if err != nil {
 		// Сохраняем ошибку в память
-		a.memoryManager.AddMessage("error", fmt.Sprintf("Query: %s\nError: %v", query, err))
+		a.memoryManager.AddMessage("error", fmt.Sprintf("Query: %s\nError: %v", originalQuery, err))
 		return "", fmt.Errorf("qwen cli failed: %w", err)
 	}
 
@@ -178,12 +254,21 @@ func (a *Agent) Run(ctx context.Context, query string) (string, error) {
 	return output, nil
 }
 
-// prependSystemPrompt добавляет системный промпт к запросу
-func (a *Agent) prependSystemPrompt(query string) string {
-	if a.systemPrompt == "" {
-		return query
+// prependSystemPromptWithContext добавляет системный промпт с контекстом
+func (a *Agent) prependSystemPromptWithContext(query, context string) string {
+	basePrompt := a.systemPrompt
+	
+	if context != "" {
+		return fmt.Sprintf("%s\n\n---\n\nКонтекст из памяти:\n%s\n\n---\n\nЗапрос пользователя: %s", 
+			basePrompt, context, query)
 	}
-	return fmt.Sprintf("%s\n\n---\n\nЗапрос пользователя: %s", a.systemPrompt, query)
+	
+	return fmt.Sprintf("%s\n\n---\n\nЗапрос пользователя: %s", basePrompt, query)
+}
+
+// prependSystemPrompt добавляет системный промпт (для совместимости)
+func (a *Agent) prependSystemPrompt(query string) string {
+	return a.prependSystemPromptWithContext(query, "")
 }
 
 // buildCommandArgs строит аргументы командной строки для qwen cli
