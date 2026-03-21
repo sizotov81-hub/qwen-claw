@@ -49,6 +49,9 @@ type Agent struct {
 	// systemPrompt системный промпт (личность)
 	systemPrompt string
 
+	// antiDegradation система антидеградации
+	antiDegradation *AntiDegradationSystem
+
 	// conversationHistory история разговора
 	conversationHistory []string
 }
@@ -74,11 +77,15 @@ func NewAgent(
 	skillEngine := skills.NewAgentSkillEngine()
 	skillEngine.SetMemoryManager(memoryManager)
 
+	// Создаём систему антидеградации
+	antiDegradation := NewAntiDegradationSystem(filepath.Join(os.Getenv("HOME"), "qwen-claw", ".qwen", "anti-degradation"))
+
 	return &Agent{
 		config:              config,
 		memoryManager:       memoryManager,
 		skillEngine:         skillEngine,
 		systemPrompt:        systemPrompt,
+		antiDegradation:     antiDegradation,
 		conversationHistory: make([]string, 0),
 	}
 }
@@ -440,4 +447,16 @@ func (a *Agent) ReloadSystemPrompt() error {
 	}
 	a.systemPrompt = newPrompt
 	return nil
+}
+
+// GetAntiDegradationSystem возвращает систему антидеградации
+func (a *Agent) GetAntiDegradationSystem() *AntiDegradationSystem {
+	return a.antiDegradation
+}
+
+// RecordTaskMetric записывает метрики задачи
+func (a *Agent) RecordTaskMetric(query string, duration time.Duration, attempts int, errors []string, success bool) {
+	if a.antiDegradation != nil {
+		a.antiDegradation.RecordTask(query, duration, attempts, errors, success)
+	}
 }

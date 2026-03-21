@@ -211,6 +211,25 @@ func main() {
 	webCmd.Flags().Int("port", 64656, "порт для прослушивания (по умолчанию 64656)")
 	rootCmd.AddCommand(webCmd)
 
+	// Команда degradation
+	var degradationCmd = &cobra.Command{
+		Use:   "degradation",
+		Short: "Управление системой антидеградации",
+		Long:  "Просмотр отчётов и управление системой антидеградации",
+		RunE:  degradationReport,
+	}
+	degradationCmd.AddCommand(&cobra.Command{
+		Use:   "report",
+		Short: "Показать отчёт о деградации",
+		RunE:  degradationReport,
+	})
+	degradationCmd.AddCommand(&cobra.Command{
+		Use:   "clear",
+		Short: "Очистить историю деградации",
+		RunE:  degradationClear,
+	})
+	rootCmd.AddCommand(degradationCmd)
+
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
@@ -1368,5 +1387,65 @@ func runWebUI(cmd *cobra.Command, args []string) error {
 	)
 
 	return webServer.Start()
+}
+
+// degradationReport показывает отчёт о деградации
+func degradationReport(cmd *cobra.Command, args []string) error {
+	cfg, err := config.Load(cfgFile)
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	if err := cfg.EnsureDirs(); err != nil {
+		return fmt.Errorf("failed to create directories: %w", err)
+	}
+
+	memoryManager := memory.NewManager(cfg.MemoryDir)
+	if err := memoryManager.Init(); err != nil {
+		return fmt.Errorf("failed to init memory: %w", err)
+	}
+
+	agentInstance := agent.NewAgent(
+		agent.AgentConfig{},
+		memoryManager,
+	)
+
+	report := agentInstance.GetAntiDegradationSystem().GetDegradationReport()
+
+	fmt.Printf("📊 Anti-Degradation Report\n")
+	fmt.Printf("=========================\n\n")
+	fmt.Printf("✅ Total tasks: %d\n", report.TotalTasks)
+	fmt.Printf("⚠️  Degradations: %d\n", report.DegradationCount)
+	fmt.Printf("📚 Lessons learned: %d\n", report.LessonsCount)
+	fmt.Printf("📈 Efficiency: %.1f%%\n\n", report.Efficiency)
+
+	if len(report.Patterns) > 0 {
+		fmt.Println("Patterns detected:")
+		for pattern, count := range report.Patterns {
+			fmt.Printf("  - %s: %d\n", pattern, count)
+		}
+	}
+
+	return nil
+}
+
+// degradationClear очищает историю деградации
+func degradationClear(cmd *cobra.Command, args []string) error {
+	cfg, err := config.Load(cfgFile)
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	if err := cfg.EnsureDirs(); err != nil {
+		return fmt.Errorf("failed to create directories: %w", err)
+	}
+
+	// Очищаем файлы
+	dataDir := filepath.Join(os.Getenv("HOME"), "qwen-claw", ".qwen", "anti-degradation")
+	os.Remove(filepath.Join(dataDir, "metrics.json"))
+	os.Remove(filepath.Join(dataDir, "lessons.json"))
+
+	fmt.Println("✅ Anti-degradation history cleared")
+	return nil
 }
 
