@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/url"
@@ -16,6 +17,8 @@ import (
 	"github.com/user/qwen-claw/internal/agent"
 	"github.com/user/qwen-claw/internal/memory"
 	"github.com/user/qwen-claw/internal/scheduler"
+	"github.com/user/qwen-claw/internal/selfimprovement"
+	"github.com/user/qwen-claw/internal/voice"
 )
 
 // BotConfig конфигурация бота
@@ -46,7 +49,10 @@ type Bot struct {
 
 	// scheduler планировщик задач
 	scheduler *scheduler.Scheduler
-
+	
+	// selfImprovement система самосовершенствования
+	selfImprovement *selfimprovement.Engine
+	
 	// running флаг работы
 	running bool
 }
@@ -72,13 +78,18 @@ func NewBot(
 	if err != nil {
 		return nil, fmt.Errorf("failed to create bot api: %w", err)
 	}
+	
+	// Создаём систему самосовершенствования
+	projectRoot := os.Getenv("HOME") + "/qwen-claw"
+	selfImprovement := selfimprovement.NewEngine(projectRoot)
 
 	return &Bot{
-		config:    config,
-		api:       api,
-		agent:     agentInstance,
-		memory:    memoryManager,
-		scheduler: schedulerInstance,
+		config:          config,
+		api:             api,
+		agent:           agentInstance,
+		memory:          memoryManager,
+		scheduler:       schedulerInstance,
+		selfImprovement: selfImprovement,
 	}, nil
 }
 
@@ -190,6 +201,12 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 	// Обрабатываем документы
 	if msg.Document != nil {
 		b.handleDocument(msg)
+		return
+	}
+
+	// Обрабатываем голосовые сообщения
+	if msg.Voice != nil {
+		b.handleVoice(msg)
 		return
 	}
 
@@ -472,6 +489,91 @@ func (b *Bot) handleDocument(msg *tgbotapi.Message) {
 		fileName, fileSize, fileURL,
 	)
 	b.sendMessage(msg.Chat.ID, response)
+}
+
+// handleVoice обрабатывает голосовые сообщения
+func (b *Bot) handleVoice(msg *tgbotapi.Message) {
+	b.sendChatAction(msg.Chat.ID, "typing")
+
+	voice := msg.Voice
+	
+	// Получаем файл
+	file := tgbotapi.FileConfig{
+		FileID: voice.FileID,
+	}
+	
+	fileURL, err := b.api.GetFileDirectURL(voice.FileID)
+	if err != nil {
+		b.sendMessage(msg.Chat.ID, fmt.Sprintf("❌ Ошибка загрузки голосового: %v", err))
+		return
+	}
+	
+	// Скачиваем
+	resp, err := http.Get(fileURL)
+	if err != nil {
+		b.sendMessage(msg.Chat.ID, fmt.Sprintf("❌ Ошибка скачивания: %v", err))
+		return
+	}
+	defer resp.Body.Close()
+	
+	voiceData, err := io.ReadAll(resp.Body)
+	if err != nil {
+		b.sendMessage(msg.Chat.ID, fmt.Sprintf("❌ Ошибка чтения: %v", err))
+		return
+	}
+	
+	// Пробуем распознать через whisper
+	whisper := voice.NewWhisper()
+	
+	if !whisper.IsInstalled() {
+		// Whisper не установлен - предлагаем установить
+		response := "🎤 **Голосовое сообщение получено**\n\n" +
+			"Для распознавания нужно установить whisper.cpp.\n\n" +
+			"**Что будет установлено:**\n" +
+			"- whisper.cpp (распознавание речи)\n" +
+			"- ffmpeg (конвертация аудио)\n" +
+			"- Модель base (~100MB)\n\n" +
+			"**Команды:**\n" +
+			"```\n" + strings.Join(voice.GetInstallationCommands(), "\n") + "\n```\n\n" +
+			"Установить? Напишите `ПОДТВЕРЖДАЮ установку whisper`"
+		
+		b.sendMessage(msg.Chat.ID, response)
+		return
+	}
+	
+	// Распознаём
+	text, err := whisper.Transcribe(voiceData)
+	if err != nil {
+		b.sendMessage(msg.Chat.ID, fmt.Sprintf("❌ Ошибка распознавания: %v", err))
+		return
+	}
+	
+	// Отправляем распознанный текст
+	response := fmt.Sprintf(
+		"🎤 **Голосовое распознано**\n\n"+
+			"**Текст:**\n_%s_\n\n"+
+			"Продолжаю диалог...",
+		text,
+	)
+	b.sendMessage(msg.Chat.ID, response)
+	
+	// Отправляем распознанный текст в агент для обработки
+	b.handleQuery(&tgbotapi.Message{
+		Chat: msg.Chat,
+		Text: text,
+		From: msg.From,
+	})
+}
+
+// IsInstalled проверяет установку whisper
+func (w *Whisper) IsInstalled() bool {
+	if _, err := os.Stat(w.whisperPath); err != nil {
+		return false
+	}
+	if _, err := os.Stat(w.modelPath); err != nil {
+		return false
+	}
+	return true
 }
 
 // sendMessage отправляет сообщение
