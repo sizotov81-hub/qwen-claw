@@ -33,8 +33,12 @@ config.yaml
 .qwen/memory/
 .qwen/local/
 .qwen/*.db
-.qwen/*.json
 .qwen/scheduler/
+.qwen/anti-degradation/*.json
+
+# Public .qwen files (tracked)
+!.qwen/*.txt
+!.qwen/*.md
 
 # Logs
 *.log
