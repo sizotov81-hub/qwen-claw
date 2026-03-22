@@ -15,9 +15,11 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/user/qwen-claw/internal/agent"
 	"github.com/user/qwen-claw/internal/config"
+	"github.com/user/qwen-claw/internal/gateway"
 	"github.com/user/qwen-claw/internal/logger"
 	"github.com/user/qwen-claw/internal/markdown"
 	"github.com/user/qwen-claw/internal/memory"
+	"github.com/user/qwen-claw/internal/sandbox"
 	"github.com/user/qwen-claw/internal/scheduler"
 	"github.com/user/qwen-claw/internal/skills"
 	"github.com/user/qwen-claw/internal/web"
@@ -135,6 +137,42 @@ func main() {
 	}
 	rootCmd.AddCommand(telegramCmd)
 
+	// Команда gateway
+	var gatewayCmd = &cobra.Command{
+		Use:   "gateway",
+		Short: "Запустить WebSocket Gateway",
+		Long:  "Запуск WebSocket Gateway для управления сессиями и клиентами",
+		RunE:  runGateway,
+	}
+	gatewayCmd.Flags().Int("port", 18789, "порт для прослушивания")
+	gatewayCmd.Flags().String("bind", "127.0.0.1", "адрес привязки")
+	gatewayCmd.Flags().Bool("debug", false, "режим отладки")
+	rootCmd.AddCommand(gatewayCmd)
+
+	// Команда sandbox
+	var sandboxCmd = &cobra.Command{
+		Use:   "sandbox",
+		Short: "Управление Docker Sandbox",
+		Long:  "Управление изолированными контейнерами для выполнения команд",
+		RunE:  sandboxStatus,
+	}
+	sandboxCmd.AddCommand(&cobra.Command{
+		Use:   "run [command]",
+		Short: "Выполнить команду в sandbox",
+		RunE:  sandboxRun,
+	})
+	sandboxCmd.AddCommand(&cobra.Command{
+		Use:   "list",
+		Short: "Список sandbox",
+		RunE:  sandboxList,
+	})
+	sandboxCmd.AddCommand(&cobra.Command{
+		Use:   "clean",
+		Short: "Очистить старые sandbox",
+		RunE:  sandboxClean,
+	})
+	rootCmd.AddCommand(sandboxCmd)
+
 	// Команда skills
 	var skillsCmd = &cobra.Command{
 		Use:   "skills",
@@ -161,6 +199,31 @@ func main() {
 		Use:   "info [name]",
 		Short: "Показать информацию о навыке",
 		RunE:  skillInfo,
+	})
+	skillsCmd.AddCommand(&cobra.Command{
+		Use:   "install [name]",
+		Short: "Установить навык из реестра",
+		RunE:  installSkill,
+	})
+	skillsCmd.AddCommand(&cobra.Command{
+		Use:   "uninstall [name]",
+		Short: "Удалить навык",
+		RunE:  uninstallSkill,
+	})
+	skillsCmd.AddCommand(&cobra.Command{
+		Use:   "search [query]",
+		Short: "Поиск навыков в реестре",
+		RunE:  searchSkills,
+	})
+	skillsCmd.AddCommand(&cobra.Command{
+		Use:   "popular",
+		Short: "Популярные навыки",
+		RunE:  popularSkills,
+	})
+	skillsCmd.AddCommand(&cobra.Command{
+		Use:   "update",
+		Short: "Проверить обновления навыков",
+		RunE:  updateSkills,
 	})
 	rootCmd.AddCommand(skillsCmd)
 
@@ -262,6 +325,22 @@ func runMain(cmd *cobra.Command, args []string) error {
 	sched := scheduler.NewScheduler(filepath.Join(cfg.QwenDir, "scheduler"), nil)
 	if err := sched.Init(); err != nil {
 		return fmt.Errorf("failed to init scheduler: %w", err)
+	}
+
+	// Загружаем навыки с автозагрузкой
+	skillEngine := skills.NewEngine(cfg.SkillsDir)
+	if err := skillEngine.Load(); err != nil {
+		return fmt.Errorf("failed to load skills: %w", err)
+	}
+
+	// Получаем список навыков с автозагрузкой
+	autoLoadSkills := skillEngine.GetAutoLoadSkills()
+	if len(autoLoadSkills) > 0 {
+		fmt.Printf("🔹 Auto-loading skills (%d):\n", len(autoLoadSkills))
+		for _, s := range autoLoadSkills {
+			fmt.Printf("   ✅ %s (%s)\n", s.Name, s.Description)
+		}
+		fmt.Println()
 	}
 
 	// Создаём агента
@@ -386,6 +465,7 @@ func runChat(cmd *cobra.Command, args []string) error {
 	fmt.Println("Commands:")
 	fmt.Println("  /help     - показать помощь")
 	fmt.Println("  /clear    - очистить историю")
+	fmt.Println("  /history  - показать историю сессии")
 	fmt.Println("  /memory   - показать память")
 	fmt.Println("  /context  - показать контекст")
 	fmt.Println("  /exit     - выйти")
@@ -411,6 +491,8 @@ func runChat(cmd *cobra.Command, args []string) error {
 				fmt.Println("Available commands:")
 				fmt.Println("  /help     - показать помощь")
 				fmt.Println("  /clear    - очистить историю")
+				fmt.Println("  /history  - показать историю сессии")
+				fmt.Println("  /compact  - сжать контекст (суммаризация)")
 				fmt.Println("  /memory   - показать память")
 				fmt.Println("  /context  - показать контекст")
 				fmt.Println("  /exit     - выйти")
@@ -423,13 +505,94 @@ func runChat(cmd *cobra.Command, args []string) error {
 
 			case "/clear":
 				agentInstance.ClearHistory()
-				fmt.Println("History cleared")
+				fmt.Println("✅ История сессии очищена")
+
+			case "/compact":
+				// Выполняем компaction сессии
+				events := agentInstance.GetSessionEvents()
+				if len(events) == 0 {
+					fmt.Println("📋 Нечего сжимать — история пуста")
+				} else {
+					// Генерируем суммаризацию
+					summary := memory.SimpleSummaryGenerator(events)
+					if err := agentInstance.CompactSession(summary); err != nil {
+						fmt.Printf("❌ Ошибка сжатия: %v\n", err)
+					} else {
+						fmt.Println("✅ Контекст сжат")
+						fmt.Println(summary)
+					}
+				}
+
+			case "/history":
+				// Пробуем получить события из event store
+				events := agentInstance.GetSessionEvents()
+				if len(events) > 0 {
+					// Показываем события с суммаризацией
+					summary, recentEvents := agentInstance.GetSessionWithSummary()
+					
+					if summary != "" {
+						fmt.Println("📝 Суммаризация:")
+						fmt.Println(summary)
+						fmt.Println()
+					}
+					
+					fmt.Printf("📋 История сессии (%d записей, последние %d):\n\n", len(events), len(recentEvents))
+					for i, event := range recentEvents {
+						if i >= 20 { // Показываем максимум 20
+							fmt.Printf("... и ещё %d записей\n", len(recentEvents)-20)
+							break
+						}
+						
+						emoji := "💬"
+						switch event.Type {
+						case memory.EventUserMessage:
+							emoji = "👤"
+						case memory.EventAssistantReply:
+							emoji = "🤖"
+						case memory.EventToolCall:
+							emoji = "🔧"
+						case memory.EventError:
+							emoji = "❌"
+						}
+						
+						fmt.Printf("%s [%s] %s\n", emoji, event.Type, event.Content[:100])
+						if len(event.Content) > 100 {
+							fmt.Printf("   ...%s\n", event.Content[100:])
+						}
+					}
+					
+					// Показываем статус компaction
+					status := agentInstance.GetCompactionStatus()
+					fmt.Printf("\n%s\n", status.FormatStatus())
+				} else {
+					// Fallback на старую историю
+					history := agentInstance.GetSessionHistory()
+					if len(history) == 0 {
+						fmt.Println("📋 История сессии пуста")
+					} else {
+						fmt.Printf("📋 История сессии (%d записей):\n\n", len(history))
+						for i, msg := range history {
+							if i >= 20 {
+								fmt.Printf("... и ещё %d записей\n", len(history)-20)
+								break
+							}
+							if strings.HasPrefix(msg, "User:") {
+								fmt.Printf("👤 %s\n", msg[5:])
+							} else if strings.HasPrefix(msg, "Assistant:") {
+								fmt.Printf("🤖 %s\n", msg[10:])
+							} else {
+								fmt.Printf("   %s\n", msg)
+							}
+						}
+					}
+				}
 
 			case "/memory":
 				entries := memoryManager.ListEntries()
 				if len(entries) == 0 {
-					fmt.Println("Memory is empty")
+					fmt.Println("📚 Память пуста")
 				} else {
+					fmt.Printf("📚 Память (%d записей):\n\n", len(entries))
 					for _, e := range entries {
 						fmt.Printf("[%s] %s\n", e.Type, e.Content)
 					}
@@ -438,7 +601,7 @@ func runChat(cmd *cobra.Command, args []string) error {
 			case "/context":
 				ctx := agentInstance.GetMemoryContext()
 				if ctx == "" {
-					fmt.Println("No context")
+					fmt.Println("📭 Контекст пуст")
 				} else {
 					fmt.Println(ctx)
 				}
@@ -448,7 +611,7 @@ func runChat(cmd *cobra.Command, args []string) error {
 				return nil
 
 			default:
-				fmt.Printf("Unknown command: %s\n", input)
+				fmt.Printf("❌ Неизвестная команда: %s\n", input)
 			}
 			continue
 		}
@@ -668,7 +831,8 @@ func initProject(cmd *cobra.Command, args []string) error {
 
 func doctorCheck(cmd *cobra.Command, args []string) error {
 	fmt.Println("Qwen-Claw Doctor")
-	fmt.Println("================\n")
+	fmt.Println("================")
+	fmt.Println()
 
 	allOk := true
 
@@ -719,6 +883,84 @@ func doctorCheck(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+func runGateway(cmd *cobra.Command, args []string) error {
+	// Загружаем конфигурацию
+	cfg, err := config.Load(cfgFile)
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	if err := cfg.EnsureDirs(); err != nil {
+		return fmt.Errorf("failed to create directories: %w", err)
+	}
+
+	// Получаем флаги
+	port, _ := cmd.Flags().GetInt("port")
+	bind, _ := cmd.Flags().GetString("bind")
+	debug, _ := cmd.Flags().GetBool("debug")
+
+	// Создаём конфигурацию Gateway
+	gatewayConfig := &gateway.Config{
+		Enabled: true,
+		Port:    port,
+		Bind:    bind,
+		Debug:   debug,
+		Auth: gateway.AuthConfig{
+			Mode:      "token",
+			Password:  "",
+			Token:     "", // будет сгенерирован автоматически
+			AllowList: []string{},
+		},
+		Tailscale: gateway.TailscaleConfig{
+			Mode: "none",
+		},
+		MaxClients: 100,
+	}
+
+	// Создаём Gateway
+	gw, err := gateway.NewGateway(gatewayConfig)
+	if err != nil {
+		return fmt.Errorf("failed to create gateway: %w", err)
+	}
+
+	// Показываем информацию
+	fmt.Println("🔌 Qwen-Claw Gateway")
+	fmt.Println("===================")
+	fmt.Printf("📡 WebSocket: ws://%s:%d/ws\n", bind, port)
+	fmt.Printf("🏥 Health:   http://%s:%d/health\n", bind, port)
+	fmt.Printf("🔑 Auth Token: %s\n", gw.GetAuthToken())
+	fmt.Println()
+	fmt.Println("Commands:")
+	fmt.Println("  /api/v1/sessions  - список сессий")
+	fmt.Println("  /api/v1/clients   - список клиентов")
+	fmt.Println("  /api/v1/broadcast - рассылка событий")
+	fmt.Println()
+	fmt.Println("WebSocket Message Types:")
+	fmt.Println("  auth       - аутентификация")
+	fmt.Println("  chat       - сообщение чата")
+	fmt.Println("  command    - команда")
+	fmt.Println("  subscribe  - подписка на канал")
+	fmt.Println()
+	fmt.Println("Press Ctrl+C to stop")
+
+	// Настраиваем обработчик сигналов
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	// Запускаем Gateway в горутине
+	go func() {
+		if err := gw.Start(); err != nil {
+			logger.Errorf("Gateway error: %v", err)
+		}
+	}()
+
+	// Ждём сигнал остановки
+	<-sigChan
+	fmt.Println("\n👋 Stopping Gateway...")
+
+	return gw.Stop()
 }
 
 func runTelegramBot(cmd *cobra.Command, args []string) error {
@@ -827,27 +1069,38 @@ func listSkills(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to load skills: %w", err)
 	}
 
-	skillList := skillEngine.List()
+	// Получаем навыки из injector
+	skillList, err := skillEngine.ListSkills()
+	if err != nil {
+		return fmt.Errorf("failed to list skills: %w", err)
+	}
+
 	if len(skillList) == 0 {
-		fmt.Println("No skills found")
+		fmt.Println("📭 No skills found")
+		fmt.Println("Install skills with: qwen-claw skills search <query>")
+		fmt.Println("Or browse popular: qwen-claw skills popular")
 		return nil
 	}
 
-	fmt.Printf("📦 Skills (%d total):\n\n", len(skillList))
+	fmt.Printf("📦 Installed Skills (%d total):\n\n", len(skillList))
 	for _, s := range skillList {
 		status := "✅"
 		if !s.Enabled {
 			status = "❌"
 		}
-		typeStr := string(s.Type)
-		if typeStr == "" {
-			typeStr = "unknown"
+		fmt.Printf("%s %s\n", status, s.Name)
+		fmt.Printf("   %s\n", s.Description)
+		if len(s.Commands) > 0 {
+			fmt.Printf("   Commands: %s\n", strings.Join(s.Commands, ", "))
 		}
-		fmt.Printf("%s [%s] %s\n", status, typeStr, s.Name)
-		fmt.Printf("   Description: %s\n", s.Description)
-		fmt.Printf("   Commands: %s\n", strings.Join(s.Commands, ", "))
 		fmt.Println()
 	}
+
+	fmt.Println("💡 Commands:")
+	fmt.Println("  qwen-claw skills search <query>  - Search skills")
+	fmt.Println("  qwen-claw skills install <name>  - Install skill")
+	fmt.Println("  qwen-claw skills enable/disable  - Enable/disable skill")
+	fmt.Println("  qwen-claw skills update          - Check for updates")
 
 	return nil
 }
@@ -864,15 +1117,16 @@ func enableSkill(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 
-	skillPath := filepath.Join(cfg.SkillsDir, skillName, "skill.json")
-	_, err = os.ReadFile(skillPath)
-	if err != nil {
-		return fmt.Errorf("skill '%s' not found: %w", skillName, err)
+	skillEngine := skills.NewEngine(cfg.SkillsDir)
+	if err := skillEngine.Load(); err != nil {
+		return fmt.Errorf("failed to load skills: %w", err)
 	}
 
-	// Включаем навык (пока просто сообщаем, что нужно отредактировать файл)
-	fmt.Printf("To enable skill '%s', edit %s and set 'enabled': true\n", skillName, skillPath)
-	fmt.Println("Note: Skills are enabled by default when loaded from skill.json")
+	if err := skillEngine.EnableSkill(skillName); err != nil {
+		return fmt.Errorf("failed to enable skill: %w", err)
+	}
+
+	fmt.Printf("✅ Skill '%s' enabled!\n", skillName)
 	return nil
 }
 
@@ -888,13 +1142,16 @@ func disableSkill(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 
-	skillPath := filepath.Join(cfg.SkillsDir, skillName, "skill.json")
-	_, err = os.ReadFile(skillPath)
-	if err != nil {
-		return fmt.Errorf("skill '%s' not found: %w", skillName, err)
+	skillEngine := skills.NewEngine(cfg.SkillsDir)
+	if err := skillEngine.Load(); err != nil {
+		return fmt.Errorf("failed to load skills: %w", err)
 	}
 
-	fmt.Printf("To disable skill '%s', edit %s and set 'enabled': false\n", skillName, skillPath)
+	if err := skillEngine.DisableSkill(skillName); err != nil {
+		return fmt.Errorf("failed to disable skill: %w", err)
+	}
+
+	fmt.Printf("✅ Skill '%s' disabled!\n", skillName)
 	return nil
 }
 
@@ -970,6 +1227,164 @@ func skillInfo(cmd *cobra.Command, args []string) error {
 	fmt.Printf("   Entry Point: %s\n", skill.EntryPoint)
 	fmt.Printf("   Enabled: %v\n", skill.Enabled)
 	fmt.Printf("   Commands: %s\n", strings.Join(skill.Commands, ", "))
+	return nil
+}
+
+// installSkill устанавливает навык из реестра
+func installSkill(cmd *cobra.Command, args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("skill name is required")
+	}
+
+	skillName := args[0]
+	cfg, err := config.Load(cfgFile)
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	skillEngine := skills.NewEngine(cfg.SkillsDir)
+	if err := skillEngine.Load(); err != nil {
+		return fmt.Errorf("failed to load skills: %w", err)
+	}
+
+	fmt.Printf("📦 Installing skill '%s'...\n", skillName)
+	if err := skillEngine.InstallSkill(skillName); err != nil {
+		return fmt.Errorf("failed to install skill: %w", err)
+	}
+
+	fmt.Printf("✅ Skill '%s' installed successfully!\n", skillName)
+	return nil
+}
+
+// uninstallSkill удаляет навык
+func uninstallSkill(cmd *cobra.Command, args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("skill name is required")
+	}
+
+	skillName := args[0]
+	cfg, err := config.Load(cfgFile)
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	skillEngine := skills.NewEngine(cfg.SkillsDir)
+	if err := skillEngine.Load(); err != nil {
+		return fmt.Errorf("failed to load skills: %w", err)
+	}
+
+	fmt.Printf("📦 Uninstalling skill '%s'...\n", skillName)
+	if err := skillEngine.UninstallSkill(skillName); err != nil {
+		return fmt.Errorf("failed to uninstall skill: %w", err)
+	}
+
+	fmt.Printf("✅ Skill '%s' uninstalled successfully!\n", skillName)
+	return nil
+}
+
+// searchSkills ищет навыки в реестре
+func searchSkills(cmd *cobra.Command, args []string) error {
+	query := ""
+	if len(args) > 0 {
+		query = strings.Join(args, " ")
+	}
+
+	cfg, err := config.Load(cfgFile)
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	skillEngine := skills.NewEngine(cfg.SkillsDir)
+	if err := skillEngine.Load(); err != nil {
+		return fmt.Errorf("failed to load skills: %w", err)
+	}
+
+	fmt.Println("🔍 Searching skills...")
+	skills, err := skillEngine.SearchSkills(query, "", nil)
+	if err != nil {
+		return fmt.Errorf("search failed: %w", err)
+	}
+
+	if len(skills) == 0 {
+		fmt.Println("No skills found")
+		return nil
+	}
+
+	fmt.Printf("📦 Found %d skills:\n\n", len(skills))
+	for _, s := range skills {
+		fmt.Printf("• %s\n", s.Name)
+		fmt.Printf("  %s\n", s.Description)
+		fmt.Printf("  Category: %s | Downloads: %d | Rating: %s\n", s.Category, s.Downloads, s.Version)
+		fmt.Println()
+	}
+
+	return nil
+}
+
+// popularSkills показывает популярные навыки
+func popularSkills(cmd *cobra.Command, args []string) error {
+	limit := 10
+	if len(args) > 0 {
+		fmt.Sscanf(args[0], "%d", &limit)
+	}
+
+	cfg, err := config.Load(cfgFile)
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	skillEngine := skills.NewEngine(cfg.SkillsDir)
+	if err := skillEngine.Load(); err != nil {
+		return fmt.Errorf("failed to load skills: %w", err)
+	}
+
+	fmt.Println("🔥 Popular skills:")
+	skills, err := skillEngine.ListPopularSkills(limit)
+	if err != nil {
+		return fmt.Errorf("failed to get popular skills: %w", err)
+	}
+
+	if len(skills) == 0 {
+		fmt.Println("No skills found")
+		return nil
+	}
+
+	for i, s := range skills {
+		fmt.Printf("%2d. %s - %s\n", i+1, s.Name, s.Description)
+	}
+
+	return nil
+}
+
+// updateSkills проверяет обновления
+func updateSkills(cmd *cobra.Command, args []string) error {
+	cfg, err := config.Load(cfgFile)
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	skillEngine := skills.NewEngine(cfg.SkillsDir)
+	if err := skillEngine.Load(); err != nil {
+		return fmt.Errorf("failed to load skills: %w", err)
+	}
+
+	fmt.Println("🔄 Checking for skill updates...")
+	updates, err := skillEngine.CheckForUpdates()
+	if err != nil {
+		return fmt.Errorf("update check failed: %w", err)
+	}
+
+	if len(updates) == 0 {
+		fmt.Println("✅ All skills are up to date!")
+		return nil
+	}
+
+	fmt.Printf("📦 Updates available (%d):\n", len(updates))
+	for _, name := range updates {
+		fmt.Printf("  • %s\n", name)
+	}
+	fmt.Println("\nTo update, run: qwen-claw skills install <skill-name>")
+
 	return nil
 }
 
@@ -1401,12 +1816,39 @@ func runWebUI(cmd *cobra.Command, args []string) error {
 	sched.Start()
 	defer sched.Stop()
 
+	// Создаём Gateway для интеграции с Web UI
+	gwConfig := &gateway.Config{
+		Enabled: true,
+		Port:    18789,
+		Bind:    "127.0.0.1",
+		Debug:   verbose,
+		Auth: gateway.AuthConfig{
+			Mode:     "token",
+			Token:    "", // будет сгенерирован автоматически
+			Password: "",
+		},
+		MaxClients: 100,
+	}
+	gw, err := gateway.NewGateway(gwConfig)
+	if err != nil {
+		logger.Warnf("⚠️  Failed to create Gateway: %v", err)
+	} else {
+		// Запускаем Gateway в горутине
+		go func() {
+			if err := gw.Start(); err != nil {
+				logger.Errorf("Gateway error: %v", err)
+			}
+		}()
+		logger.Info("🔌 Gateway started on :18789")
+	}
+
 	// Создаём и запускаем веб-сервер
 	webServer := web.NewServer(
 		*webConfig,
 		agentInstance,
 		memoryManager,
 		sched,
+		gw,
 	)
 
 	// Запускаем сервер в горутине
@@ -1434,6 +1876,137 @@ func runWebUI(cmd *cobra.Command, args []string) error {
 
 	logger.Info("✅ Web UI stopped")
 	return nil
+}
+
+// sandboxStatus показывает статус sandbox
+func sandboxStatus(cmd *cobra.Command, args []string) error {
+	fmt.Println("🔒 Qwen-Claw Sandbox")
+	fmt.Println("====================")
+	fmt.Println()
+	
+	// Проверяем доступность Docker
+	if !isDockerAvailable() {
+		fmt.Println("⚠️  Docker недоступен")
+		fmt.Println()
+		fmt.Println("Для работы sandbox необходим Docker.")
+		fmt.Println("Установите: https://docs.docker.com/get-docker/")
+		return nil
+	}
+	
+	fmt.Println("✅ Docker доступен")
+	fmt.Println()
+	fmt.Println("Команды:")
+	fmt.Println("  qwen-claw sandbox run <command>  - Выполнить команду в sandbox")
+	fmt.Println("  qwen-claw sandbox list           - Список sandbox")
+	fmt.Println("  qwen-claw sandbox clean          - Очистить старые sandbox")
+	
+	return nil
+}
+
+// sandboxRun выполняет команду в sandbox
+func sandboxRun(cmd *cobra.Command, args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("command is required")
+	}
+	
+	command := strings.Join(args, " ")
+	
+	// Проверяем Docker
+	if !isDockerAvailable() {
+		return fmt.Errorf("docker is not available")
+	}
+	
+	fmt.Printf("🔒 Выполнение команды в sandbox: %s\n\n", command)
+	
+	// Создаём менеджер sandbox
+	sbConfig := sandbox.DefaultConfig()
+	sbManager, _ := sandbox.NewManager(sbConfig, "/tmp/qwen-claw-sandbox")
+	
+	// Создаём sandbox
+	_, err := sbManager.CreateSandbox("cli")
+	if err != nil {
+		return fmt.Errorf("failed to create sandbox: %w", err)
+	}
+	
+	// Выполняем команду
+	ctx := context.Background()
+	result, err := sbManager.Execute(ctx, "cli", command)
+	if err != nil {
+		if _, ok := err.(sandbox.ErrSecurityViolation); ok {
+			return fmt.Errorf("🚫 Blocked by sandbox: %w", err)
+		}
+		return fmt.Errorf("execution failed: %w", err)
+	}
+	
+	if result.Stdout != "" {
+		fmt.Println(result.Stdout)
+	}
+	if result.Stderr != "" {
+		fmt.Fprintln(os.Stderr, result.Stderr)
+	}
+	
+	fmt.Printf("\n⏱️  Duration: %v\n", result.Duration)
+	if result.ExitCode != 0 {
+		fmt.Printf("❌ Exit code: %d\n", result.ExitCode)
+	}
+	
+	return nil
+}
+
+// sandboxList показывает список sandbox
+func sandboxList(cmd *cobra.Command, args []string) error {
+	sbConfig := sandbox.DefaultConfig()
+	sbManager, _ := sandbox.NewManager(sbConfig, "/tmp/qwen-claw-sandbox")
+	
+	sandboxes := sbManager.ListSandboxes()
+	
+	if len(sandboxes) == 0 {
+		fmt.Println("📭 Нет активных sandbox")
+		return nil
+	}
+	
+	fmt.Printf("🔒 Active Sandboxes (%d):\n\n", len(sandboxes))
+	for _, sb := range sandboxes {
+		stats := sb.GetStats()
+		fmt.Printf("📦 %s\n", stats["id"])
+		fmt.Printf("   Status: %v\n", stats["running"])
+		fmt.Printf("   Created: %s\n", stats["created"])
+		fmt.Printf("   Last Used: %s\n", stats["last_used"])
+		fmt.Printf("   Executions: %v\n", stats["exec_count"])
+		fmt.Println()
+	}
+	
+	return nil
+}
+
+// sandboxClean очищает старые sandbox
+func sandboxClean(cmd *cobra.Command, args []string) error {
+	sbConfig := sandbox.DefaultConfig()
+	sbManager, _ := sandbox.NewManager(sbConfig, "/tmp/qwen-claw-sandbox")
+	
+	maxAge := 24 * time.Hour
+	if len(args) > 0 {
+		var hours int
+		fmt.Sscanf(args[0], "%d", &hours)
+		maxAge = time.Duration(hours) * time.Hour
+	}
+	
+	fmt.Printf("🧹 Cleaning sandboxes older than %v...\n", maxAge)
+	
+	if err := sbManager.Cleanup(maxAge); err != nil {
+		return fmt.Errorf("cleanup failed: %w", err)
+	}
+	
+	fmt.Println("✅ Cleanup completed")
+	return nil
+}
+
+// isDockerAvailable проверяет доступность Docker
+func isDockerAvailable() bool {
+	cmd := exec.Command("docker", "info")
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+	return cmd.Run() == nil
 }
 
 // degradationReport показывает отчёт о деградации
