@@ -50,7 +50,7 @@ func TestCLI_Doctor(t *testing.T) {
 	buildBinary(t, binaryPath)
 
 	cmd := exec.Command(binaryPath, "doctor")
-	output, err := cmd.CombinedOutput()
+	output, _ := cmd.CombinedOutput()
 
 	// Doctor может вернуть ошибку если qwen cli не установлен
 	// Но вывод должен содержать информацию о проверках
@@ -72,7 +72,7 @@ func TestCLI_Memory(t *testing.T) {
 	cmd.Env = append(os.Environ(),
 		"QWEN_CLAW_MEMORY_DIR="+memoryDir,
 	)
-	output, err := cmd.CombinedOutput()
+	output, _ := cmd.CombinedOutput()
 
 	// Команда должна выполниться (даже если память пуста)
 	assert.NotNil(t, output)
