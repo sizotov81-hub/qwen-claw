@@ -31,6 +31,10 @@ config.yaml
 
 # Memory data
 .qwen/memory/
+.qwen/local/
+.qwen/*.db
+.qwen/*.json
+.qwen/scheduler/
 
 # Logs
 *.log

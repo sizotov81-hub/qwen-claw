@@ -160,7 +160,7 @@ func TestForgettingCurve(t *testing.T) {
 		Content:    "Will be forgotten",
 		Retention:  0.05,
 		HalfLife:   24 * time.Hour,
-		LastAccess: time.Now().Add(-48 * time.Hour),
+		LastAccessed: time.Now().Add(-48 * time.Hour),
 	}
 
 	_ = manager.saveEntry(entry)

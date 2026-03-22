@@ -1,0 +1,27 @@
+# Приватные данные — НЕ КОММИТИТЬ!
+# Private data — DO NOT COMMIT!
+
+# Память сессий
+*.db
+*.sqlite
+memory.db
+associations.db
+
+# Логи
+*.log
+
+# Кэши
+*.cache
+cache/
+
+# Временные файлы
+*.tmp
+*.bak
+
+# Локальные настройки
+local.json
+local.yaml
+
+# История сессий
+history.json
+sessions/
