@@ -1,4 +1,4 @@
-// Qwen-Claw Web UI - JavaScript с аутентификацией
+// Qwen-Claw Web UI - JavaScript с аутентификацией и историей сессий
 
 // Состояние
 const state = {
@@ -6,7 +6,9 @@ const state = {
     currentTab: 'chat',
     messages: [],
     token: null,
-    secret: null
+    secret: null,
+    currentSessionId: null,
+    sessions: []
 };
 
 // DOM элементы
@@ -27,17 +29,22 @@ const elements = {
     modal: document.getElementById('modal'),
     modalTitle: document.getElementById('modal-title'),
     modalForm: document.getElementById('modal-form'),
-    modalClose: document.querySelector('.close')
+    modalClose: document.querySelector('.close'),
+    sessionsPanel: document.getElementById('sessions-panel'),
+    sessionsList: document.getElementById('sessions-list'),
+    newSessionBtn: document.getElementById('new-session-btn'),
+    clearSessionsBtn: document.getElementById('clear-sessions-btn')
 };
 
-// Проверка сохранённой аутентификации
+// Проверка сохранённой аутентификации и сессий
 document.addEventListener('DOMContentLoaded', () => {
     const savedToken = localStorage.getItem('qwen_token');
     const savedSecret = localStorage.getItem('qwen_secret');
-    
+
     if (savedToken && savedSecret) {
         state.token = savedToken;
         state.secret = savedSecret;
+        loadSessions();
         showMainApp();
         initWebSocket();
     } else {
@@ -48,30 +55,31 @@ document.addEventListener('DOMContentLoaded', () => {
 // Аутентификация
 elements.authForm.addEventListener('submit', async (e) => {
     e.preventDefault();
-    
+
     const secret = elements.secretInput.value.trim();
     if (!secret) return;
-    
+
     try {
         const response = await fetch('/api/auth', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ secret })
         });
-        
+
         const data = await response.json();
-        
+
         if (response.status === 404 || !data.success) {
             showAuthError('Invalid secret phrase');
             return;
         }
-        
+
         // Сохраняем токен и секрет
         state.token = data.token;
         state.secret = secret;
         localStorage.setItem('qwen_token', data.token);
         localStorage.setItem('qwen_secret', secret);
-        
+
+        loadSessions();
         showMainApp();
         initWebSocket();
         loadStatus();
@@ -103,6 +111,7 @@ function showMainApp() {
     initMemory();
     initTasks();
     loadSkills();
+    renderSessions();
 }
 
 function showAuthError(message) {
@@ -125,15 +134,15 @@ function initNavigation() {
 
 function switchTab(tab) {
     state.currentTab = tab;
-    
+
     elements.navBtns.forEach(btn => {
         btn.classList.toggle('active', btn.dataset.tab === tab);
     });
-    
+
     elements.tabs.forEach(t => {
         t.classList.toggle('active', t.id === tab);
     });
-    
+
     // Загружаем данные для вкладки
     if (tab === 'memory') loadMemory();
     if (tab === 'tasks') loadTasks();
@@ -144,25 +153,25 @@ function switchTab(tab) {
 function initWebSocket() {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${protocol}//${window.location.host}/ws?token=${encodeURIComponent(state.token)}`;
-    
+
     state.ws = new WebSocket(wsUrl);
-    
+
     state.ws.onopen = () => {
         elements.wsStatus.classList.add('connected');
         elements.wsText.textContent = 'Подключено';
     };
-    
+
     state.ws.onclose = () => {
         elements.wsStatus.classList.remove('connected');
         elements.wsText.textContent = 'Отключено';
         // Переподключение через 5 секунд
         setTimeout(initWebSocket, 5000);
     };
-    
+
     state.ws.onerror = () => {
         elements.wsText.textContent = 'Ошибка';
     };
-    
+
     state.ws.onmessage = (event) => {
         const data = JSON.parse(event.data);
         handleWSMessage(data);
@@ -176,7 +185,7 @@ function handleWSMessage(data) {
     } else if (data.type === 'chat_response') {
         // Скрываем индикатор
         hideThinkingIndicator();
-        
+
         // Потоковый вывод с эффектом печати
         if (data.streaming) {
             typeWriterEffect(data.message, 'assistant');
@@ -184,7 +193,7 @@ function handleWSMessage(data) {
             addMessage(data.message, 'user');
             addMessage(data.response || data.message, 'assistant');
         }
-        
+
         // Проверяем confirmation в отдельном сообщении
     } else if (data.type === 'confirmation') {
         // Показываем кнопки подтверждения
@@ -215,7 +224,7 @@ function typeWriterEffect(text, type) {
     const div = document.createElement('div');
     div.className = `message ${type}`;
     elements.chatMessages.appendChild(div);
-    
+
     // Рендерим markdown
     div.innerHTML = marked.parse(text);
     elements.chatMessages.scrollTop = elements.chatMessages.scrollHeight;
@@ -224,7 +233,7 @@ function typeWriterEffect(text, type) {
 function showConfirmationButtons(actions) {
     const div = document.createElement('div');
     div.className = 'message confirmation';
-    
+
     let html = '<div class="confirmation-box"><strong>⚠️ Требуется подтверждение:</strong><br><br>';
     actions.forEach(action => {
         html += `<div class="confirmation-item">
@@ -234,7 +243,7 @@ function showConfirmationButtons(actions) {
         </div>`;
     });
     html += '</div>';
-    
+
     div.innerHTML = html;
     elements.chatMessages.appendChild(div);
     elements.chatMessages.scrollTop = elements.chatMessages.scrollHeight;
@@ -266,21 +275,178 @@ function confirmAction(actionId, confirm) {
     .catch(err => addMessage(err.message, 'error'));
 }
 
+// === УПРАВЛЕНИЕ СЕССИЯМИ ===
+
+function loadSessions() {
+    const saved = localStorage.getItem('qwen_sessions');
+    if (saved) {
+        state.sessions = JSON.parse(saved);
+    }
+    
+    // Если сессий нет, создаём текущую
+    if (state.sessions.length === 0) {
+        createNewSession();
+    } else {
+        // Загружаем последнюю активную сессию
+        const lastActive = state.sessions.find(s => s.active) || state.sessions[0];
+        state.currentSessionId = lastActive.id;
+        state.messages = lastActive.messages || [];
+    }
+}
+
+function createNewSession() {
+    const session = {
+        id: Date.now().toString(),
+        name: `Сессия ${new Date().toLocaleTimeString()}`,
+        messages: [],
+        createdAt: new Date().toISOString(),
+        active: true
+    };
+    
+    // Деактивируем все сессии
+    state.sessions.forEach(s => s.active = false);
+    state.sessions.unshift(session);
+    state.currentSessionId = session.id;
+    state.messages = [];
+    
+    saveSessions();
+    renderSessions();
+    renderMessages();
+    
+    return session;
+}
+
+function switchSession(sessionId) {
+    const session = state.sessions.find(s => s.id === sessionId);
+    if (!session) return;
+
+    // Сохраняем текущие сообщения в активную сессию
+    const oldActive = state.sessions.find(s => s.active);
+    if (oldActive) {
+        oldActive.messages = state.messages;
+    }
+
+    // Деактивируем все и активируем выбранную
+    state.sessions.forEach(s => s.active = s.id === sessionId);
+    state.currentSessionId = sessionId;
+    state.messages = session.messages || [];
+
+    saveSessions();
+    renderSessions();
+    renderMessages();
+    
+    // Прокручиваем чат вверх
+    if (elements.chatMessages) {
+        elements.chatMessages.scrollTop = 0;
+    }
+}
+
+function deleteSession(sessionId) {
+    if (state.sessions.length <= 1) {
+        alert('Нельзя удалить последнюю сессию');
+        return;
+    }
+    
+    if (!confirm('Удалить эту сессию?')) return;
+    
+    state.sessions = state.sessions.filter(s => s.id !== sessionId);
+    
+    if (state.currentSessionId === sessionId) {
+        state.currentSessionId = state.sessions[0].id;
+        state.sessions[0].active = true;
+        state.messages = state.sessions[0].messages || [];
+    }
+    
+    saveSessions();
+    renderSessions();
+    renderMessages();
+}
+
+function clearAllSessions() {
+    if (!confirm('Вы уверены? Вся история чатов будет удалена.')) return;
+    
+    state.sessions = [];
+    createNewSession();
+}
+
+function saveSessions() {
+    // Сохраняем текущие сообщения в активную сессию
+    const activeSession = state.sessions.find(s => s.active);
+    if (activeSession) {
+        activeSession.messages = state.messages;
+    }
+    
+    localStorage.setItem('qwen_sessions', JSON.stringify(state.sessions));
+}
+
+function renderSessions() {
+    if (!elements.sessionsList) return;
+
+    elements.sessionsList.innerHTML = state.sessions.map(session => {
+        const isActive = session.id === state.currentSessionId;
+        const date = new Date(session.createdAt);
+        const dateStr = date.toLocaleDateString() + ' ' + date.toLocaleTimeString().slice(0, 5);
+        const msgCount = session.messages ? session.messages.length : 0;
+
+        return `
+            <div class="session-item ${isActive ? 'active' : ''}" data-session-id="${session.id}">
+                <div class="session-info" onclick="switchSession('${session.id}')" title="${isActive ? 'Активная сессия' : 'Нажмите, чтобы открыть'}">
+                    <div class="session-name">${escapeHtml(session.name)}</div>
+                    <div class="session-meta">${dateStr} • ${msgCount} сообщ.</div>
+                </div>
+                <button class="session-delete" onclick="deleteSession('${session.id}')" title="Удалить">🗑️</button>
+            </div>
+        `;
+    }).join('');
+}
+
+function renderMessages() {
+    elements.chatMessages.innerHTML = '';
+    state.messages.forEach(msg => {
+        const div = document.createElement('div');
+        div.className = `message ${msg.type}`;
+        if (msg.type === 'assistant' || msg.type === 'user') {
+            div.innerHTML = marked.parse(msg.text);
+        } else {
+            div.textContent = msg.text;
+        }
+        elements.chatMessages.appendChild(div);
+    });
+    elements.chatMessages.scrollTop = elements.chatMessages.scrollHeight;
+}
+
+// Глобальные функции для переключения сессий
+window.switchSession = switchSession;
+window.deleteSession = deleteSession;
+
 // Чат
 function initChat() {
+    // Загружаем сообщения текущей сессии
+    renderMessages();
+    
     elements.sendBtn.addEventListener('click', sendMessage);
     elements.chatInput.addEventListener('keypress', (e) => {
         if (e.key === 'Enter') sendMessage();
     });
+    
+    // Новая сессия
+    if (elements.newSessionBtn) {
+        elements.newSessionBtn.addEventListener('click', createNewSession);
+    }
+    
+    // Очистить все сессии
+    if (elements.clearSessionsBtn) {
+        elements.clearSessionsBtn.addEventListener('click', clearAllSessions);
+    }
 }
 
 function sendMessage() {
     const message = elements.chatInput.value.trim();
     if (!message) return;
-    
+
     addMessage(message, 'user');
     elements.chatInput.value = '';
-    
+
     // Отправляем через WebSocket
     if (state.ws && state.ws.readyState === WebSocket.OPEN) {
         state.ws.send(JSON.stringify({
@@ -291,7 +457,7 @@ function sendMessage() {
         // Fallback через HTTP
         fetch('/api/chat', {
             method: 'POST',
-            headers: { 
+            headers: {
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${state.token}`
             },
@@ -312,9 +478,27 @@ function sendMessage() {
 function addMessage(text, type) {
     const div = document.createElement('div');
     div.className = `message ${type}`;
-    div.textContent = text;
+    
+    if (type === 'assistant' || type === 'user') {
+        div.innerHTML = marked.parse(text);
+    } else {
+        div.textContent = text;
+    }
+    
     elements.chatMessages.appendChild(div);
     elements.chatMessages.scrollTop = elements.chatMessages.scrollHeight;
+    
+    // Сохраняем в текущую сессию
+    state.messages.push({ text, type, timestamp: new Date().toISOString() });
+    saveSessions();
+    
+    // Обновляем название сессии по первому сообщению
+    const activeSession = state.sessions.find(s => s.active);
+    if (activeSession && state.messages.length === 1 && type === 'user') {
+        activeSession.name = text.slice(0, 30) + (text.length > 30 ? '...' : '');
+        saveSessions();
+        renderSessions();
+    }
 }
 
 // Память
@@ -326,7 +510,7 @@ function initMemory() {
         ], async (data) => {
             const res = await fetch('/api/memory', {
                 method: 'POST',
-                headers: { 
+                headers: {
                     'Content-Type': 'application/json',
                     'Authorization': `Bearer ${state.token}`
                 },
@@ -340,10 +524,10 @@ function initMemory() {
             }
         });
     });
-    
+
     document.getElementById('clear-memory-btn').addEventListener('click', async () => {
         if (!confirm('Вы уверены?')) return;
-        await fetch('/api/memory', { 
+        await fetch('/api/memory', {
             method: 'DELETE',
             headers: { 'Authorization': `Bearer ${state.token}` }
         });
@@ -357,12 +541,12 @@ async function loadMemory() {
     });
     const data = await res.json();
     const list = document.getElementById('memory-list');
-    
+
     if (!data.success || !data.data || data.data.length === 0) {
         list.innerHTML = '<p class="empty">Память пуста</p>';
         return;
     }
-    
+
     list.innerHTML = data.data.map(entry => `
         <div class="list-item">
             <h4>[${entry.type}] ${escapeHtml(entry.content)}</h4>
@@ -383,7 +567,7 @@ function initTasks() {
         ], async (data) => {
             const res = await fetch('/api/tasks', {
                 method: 'POST',
-                headers: { 
+                headers: {
                     'Content-Type': 'application/json',
                     'Authorization': `Bearer ${state.token}`
                 },
@@ -405,12 +589,12 @@ async function loadTasks() {
     });
     const data = await res.json();
     const list = document.getElementById('tasks-list');
-    
+
     if (!data.success || !data.data || data.data.length === 0) {
         list.innerHTML = '<p class="empty">Нет задач</p>';
         return;
     }
-    
+
     list.innerHTML = data.data.map(task => `
         <div class="list-item">
             <h4>${task.enabled ? '✅' : '❌'} ${escapeHtml(task.name)}</h4>
@@ -431,12 +615,12 @@ async function loadSkills() {
     });
     const data = await res.json();
     const list = document.getElementById('skills-list');
-    
+
     if (!data.success || !data.data) {
         list.innerHTML = '<p class="empty">Нет навыков</p>';
         return;
     }
-    
+
     list.innerHTML = data.data.map(skill => `
         <div class="list-item">
             <h4>${skill.enabled ? '✅' : '❌'} ${escapeHtml(skill.name)}</h4>
@@ -455,12 +639,12 @@ async function loadStatus() {
     });
     const data = await res.json();
     const grid = document.getElementById('status-content');
-    
+
     if (!data.success || !data.data) {
         grid.innerHTML = '<p class="empty">Не удалось загрузить статус</p>';
         return;
     }
-    
+
     const d = data.data;
     grid.innerHTML = `
         <div class="status-card">
@@ -490,7 +674,7 @@ async function loadStatus() {
             <div class="value">${d.skills_count}</div>
         </div>
         <div class="status-card">
-            <h3>WebSocket клиенты</h3>
+            <h3>WebSocket клиентов</h3>
             <div class="value">${d.ws_clients}</div>
         </div>
     `;
@@ -500,12 +684,12 @@ async function loadStatus() {
 function showModal(title, fields, onSubmit) {
     elements.modalTitle.textContent = title;
     elements.modalForm.innerHTML = '';
-    
+
     fields.forEach(field => {
         const label = document.createElement('label');
         label.textContent = field.label;
         elements.modalForm.appendChild(label);
-        
+
         let input;
         if (field.type === 'select') {
             input = document.createElement('select');
@@ -522,18 +706,18 @@ function showModal(title, fields, onSubmit) {
             input = document.createElement('input');
             input.type = field.type || 'text';
         }
-        
+
         input.name = field.name;
         if (field.placeholder) input.placeholder = field.placeholder;
         elements.modalForm.appendChild(input);
     });
-    
+
     const submitBtn = document.createElement('button');
     submitBtn.type = 'submit';
     submitBtn.className = 'btn btn-primary';
     submitBtn.textContent = 'Сохранить';
     elements.modalForm.appendChild(submitBtn);
-    
+
     elements.modalForm.onsubmit = async (e) => {
         e.preventDefault();
         const formData = new FormData(elements.modalForm);
@@ -541,7 +725,7 @@ function showModal(title, fields, onSubmit) {
         await onSubmit(data);
         elements.modal.style.display = 'none';
     };
-    
+
     elements.modal.style.display = 'block';
 }
 
