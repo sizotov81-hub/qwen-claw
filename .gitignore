@@ -49,3 +49,14 @@ logs/
 Thumbs.db
 .web-secrets.json
 .dockerignore
+
+# Build artifacts
+qwen-claw.old
+coverage.out
+coverage_partial.out
+
+# Local data
+internal/agent/.qwen/
+.qwen/local/
+.qwen/sessions/
+
