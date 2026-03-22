@@ -271,7 +271,7 @@ func (m *Manager) resolveContradictions() {
 // saveEntry сохраняет запись
 func (m *Manager) saveEntry(entry *Entry) error {
 	metadataJSON, _ := json.Marshal(entry.Metadata)
-	
+
 	query := `
 		INSERT OR REPLACE INTO memory_entries
 		(id, type, category, content, metadata, importance, retention,
@@ -279,7 +279,7 @@ func (m *Manager) saveEntry(entry *Entry) error {
 		 repetition_count, half_life, chunk_id)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
-	
+
 	_, err := m.db.Exec(query,
 		entry.ID, entry.Type, entry.Category, entry.Content,
 		string(metadataJSON), entry.Importance, entry.Retention,
@@ -287,7 +287,12 @@ func (m *Manager) saveEntry(entry *Entry) error {
 		entry.AccessCount, entry.RepetitionCount, int(entry.HalfLife.Seconds()),
 		entry.ChunkID,
 	)
-	
+
+	// Обновляем индекс
+	if err == nil {
+		m.index.Add(entry)
+	}
+
 	return err
 }
 

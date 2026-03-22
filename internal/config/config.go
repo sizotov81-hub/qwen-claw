@@ -113,40 +113,48 @@ func Default() *Config {
 	}
 }
 
-// Load загружает конфигурацию из файла
+// Load загружает конфигурацию из файла с кэшированием
 func Load(configPath string) (*Config, error) {
+	// Проверяем кэш
+	if cached, ok := GetConfig(configPath); ok {
+		return cached, nil
+	}
+
 	cfg := Default()
-	
+
 	// Если файл конфигурации существует, загружаем его
 	if configPath != "" {
 		viper.SetConfigFile(configPath)
 		viper.SetConfigType("yaml")
-		
+
 		if err := viper.ReadInConfig(); err != nil {
 			return nil, fmt.Errorf("failed to read config: %w", err)
 		}
 	}
-	
+
 	// Переопределяем из переменных окружения
 	viper.AutomaticEnv()
 	viper.SetEnvPrefix("QWEN_CLAW")
-	
+
 	// Явно читаем переменные окружения для Telegram
 	if token := os.Getenv("QWEN_CLAW_TELEGRAM_TOKEN"); token != "" {
 		cfg.Telegram.Token = token
 		cfg.Telegram.Enabled = true
 	}
-	
+
 	// Привязываем к структуре
 	if err := viper.Unmarshal(cfg); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
 	}
-	
+
 	// Обрабатываем список разрешённых пользователей из env
 	if allowedUsers := os.Getenv("QWEN_CLAW_TELEGRAM_ALLOWED_USERS"); allowedUsers != "" {
 		cfg.Telegram.AllowedUsers = parseAllowedUsers(allowedUsers)
 	}
-	
+
+	// Сохраняем в кэш
+	SetConfig(configPath, cfg)
+
 	return cfg, nil
 }
 

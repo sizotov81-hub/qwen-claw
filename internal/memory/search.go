@@ -59,7 +59,17 @@ func (m *Manager) Find(query string, context *SearchContext) *SearchResult {
 		m.logAccess(result.Entries)
 		return result
 	}
-	
+
+	// УРОВЕНЬ 1.5: Inverted Index (~0.5мс) — БЫСТРЕЕ FTS!
+	if indexResult := m.searchIndex(query); indexResult.Found {
+		result.Found = true
+		result.Source = "index"
+		result.Entries = indexResult.Entries
+		result.Latency = time.Since(startTime)
+		m.logAccess(result.Entries)
+		return result
+	}
+
 	// УРОВЕНЬ 2: Full-Text Search (~10мс)
 	if ftsResult := m.searchFTS(query); ftsResult.Found {
 		result.Found = true
@@ -107,9 +117,9 @@ func (m *Manager) Find(query string, context *SearchContext) *SearchResult {
 func (m *Manager) searchWorking(query string) *SearchResult {
 	m.working.mu.RLock()
 	defer m.working.mu.RUnlock()
-	
+
 	tokens := tokenize(query)
-	
+
 	// Ищем в активных чанках
 	for _, chunk := range m.working.Chunks {
 		// Проверка названия чанка
@@ -121,7 +131,7 @@ func (m *Manager) searchWorking(query string) *SearchResult {
 				Source: "working",
 			}
 		}
-		
+
 		// Проверка содержимого
 		for _, entry := range chunk.Entries {
 			if containsAny(entry.Content, tokens) {
@@ -134,8 +144,44 @@ func (m *Manager) searchWorking(query string) *SearchResult {
 			}
 		}
 	}
-	
+
 	return &SearchResult{Found: false}
+}
+
+// searchIndex поиск через инвертированный индекс
+func (m *Manager) searchIndex(query string) *SearchResult {
+	if m.index == nil {
+		return &SearchResult{Found: false}
+	}
+
+	// Точный поиск
+	entries := m.index.Search(query)
+	if len(entries) > 0 {
+		return &SearchResult{
+			Found:   true,
+			Entries: entries,
+			Source:  "index",
+		}
+	}
+
+	// Частичный поиск (медленнее)
+	entries = m.index.SearchPartial(query)
+	if len(entries) > 0 {
+		return &SearchResult{
+			Found:   true,
+			Entries: entries[:min(len(entries), 10)], // Ограничиваем результат
+			Source:  "index-partial",
+		}
+	}
+
+	return &SearchResult{Found: false}
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // searchFTS full-text поиск

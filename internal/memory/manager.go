@@ -15,17 +15,20 @@ import (
 // Manager менеджер памяти с нейробиологической архитектурой
 type Manager struct {
 	mu sync.RWMutex
-	
+
 	// Базы данных
 	db         *sql.DB
 	assocDB    *sql.DB
-	
+
 	// Working memory (in-memory)
 	working *WorkingMemory
-	
+
+	// Inverted index для быстрого поиска
+	index *InvertedIndex
+
 	// Пути
 	dataDir string
-	
+
 	// Настройки
 	config *Config
 }
@@ -115,6 +118,7 @@ func NewManager(dataDir string) *Manager {
 			MaxChunks: 9,
 			DecayTime: 5 * time.Minute,
 		},
+		index: NewInvertedIndex(),
 	}
 }
 
@@ -122,30 +126,58 @@ func NewManager(dataDir string) *Manager {
 func (m *Manager) Init() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	
+
 	if err := os.MkdirAll(m.dataDir, 0755); err != nil {
 		return fmt.Errorf("failed to create memory directory: %w", err)
 	}
-	
+
 	m.loadConfig()
-	
+
 	if err := m.initDatabase(); err != nil {
 		return fmt.Errorf("failed to init database: %w", err)
 	}
-	
+
+	// Загружаем записи в индекс
+	if err := m.rebuildIndex(); err != nil {
+		return fmt.Errorf("failed to build index: %w", err)
+	}
+
 	if err := m.initAssociationDB(); err != nil {
 		return fmt.Errorf("failed to init association database: %w", err)
 	}
-	
+
 	if err := m.loadWorkingMemory(); err != nil {
 		return fmt.Errorf("failed to load working memory: %w", err)
 	}
-	
+
 	// Запускаем фоновые процессы
 	go m.consolidationLoop()
 	go m.forgettingLoop()
 	go m.restructuringLoop()
-	
+
+	return nil
+}
+
+// rebuildIndex перестраивает индекс из базы данных
+func (m *Manager) rebuildIndex() error {
+	query := `SELECT id, type, category, content FROM memory_entries`
+	rows, err := m.db.Query(query)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	entries := make([]*Entry, 0)
+	for rows.Next() {
+		entry := &Entry{}
+		err := rows.Scan(&entry.ID, &entry.Type, &entry.Category, &entry.Content)
+		if err != nil {
+			return err
+		}
+		entries = append(entries, entry)
+	}
+
+	m.index.Rebuild(entries)
 	return nil
 }
 
