@@ -3,115 +3,180 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Qwen-Claw Web UI - Secure Access</title>
+    <title>Qwen-Claw Web UI</title>
     <link rel="stylesheet" href="styles.css">
     <!-- Marked.js для Markdown -->
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <!-- Highlight.js для подсветки кода -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
 </head>
 <body>
     <!-- Экран аутентификации -->
     <div id="auth-screen" class="auth-container">
         <div class="auth-box">
-            <div class="logo">🔐</div>
-            <h2>Qwen-Claw Web UI</h2>
-            <p class="subtitle">Secure Access</p>
+            <div class="logo">🤖</div>
+            <h1>Qwen-Claw</h1>
+            <p class="subtitle">AI Assistant with Memory</p>
             
             <div id="auth-error" class="auth-error"></div>
             
             <form id="auth-form" class="auth-form">
-                <input type="text" id="secret-input" placeholder="Secret Phrase" autocomplete="off" required>
-                <button type="submit">🔓 Authenticate</button>
+                <input type="password" id="secret-input" placeholder="Secret Phrase" autocomplete="off" required>
+                <button type="submit">🔓 Войти</button>
             </form>
             
-            <p style="text-align: center; margin-top: 20px; color: var(--text-secondary); font-size: 0.8rem;">
-                Enter your secret phrase to access the Web UI
+            <p class="auth-hint">
+                Введите секретную фразу для доступа<br>
+                (см. <code>.web-secrets.json</code>)
             </p>
         </div>
     </div>
 
     <!-- Основной интерфейс -->
-    <div id="main-app" class="container">
+    <div id="main-app" class="container hidden">
         <!-- Боковая панель -->
         <aside class="sidebar">
-            <div class="logo">
-                <h1>🤖 Qwen-Claw</h1>
+            <div class="sidebar-header">
+                <div class="logo-small">🤖</div>
+                <h2>Qwen-Claw</h2>
+                <button id="new-chat-btn" class="new-chat-btn" title="Новый чат">
+                    <span>+</span> Новый чат
+                </button>
             </div>
-            <nav class="nav">
-                <button class="nav-btn active" data-tab="chat">💬 Чат</button>
-                <button class="nav-btn" data-tab="memory">🧠 Память</button>
-                <button class="nav-btn" data-tab="tasks">📋 Задачи</button>
-                <button class="nav-btn" data-tab="skills">🛠️ Навыки</button>
-                <button class="nav-btn" data-tab="status">📊 Статус</button>
-            </nav>
-            <div class="connection-status">
-                <span id="ws-status" class="status-dot"></span>
-                <span id="ws-text">Подключение...</span>
+            
+            <div class="sidebar-section">
+                <h3>📚 История чатов</h3>
+                <div id="chat-history" class="chat-history">
+                    <!-- История будет загружена здесь -->
+                </div>
             </div>
-            <button id="logout-btn" class="btn btn-danger" style="margin-top: 10px;">🚪 Выход</button>
-        </aside>
-
-        <!-- Панель истории сессий -->
-        <aside class="sessions-panel" id="sessions-panel">
-            <div class="sessions-header">
-                <h3>📜 История сессий</h3>
-                <button id="new-session-btn" class="btn-icon" title="Новая сессия">➕</button>
-            </div>
-            <div id="sessions-list" class="sessions-list"></div>
-            <button id="clear-sessions-btn" class="btn btn-sm btn-danger" style="margin-top: 10px; width: 100%;">🗑️ Очистить историю</button>
-        </aside>
-
-        <!-- Основной контент -->
-        <main class="content">
-            <!-- Чат -->
-            <section id="chat" class="tab active">
-                <div class="chat-container">
-                    <div id="chat-messages" class="chat-messages"></div>
-                    <div class="chat-input-container">
-                        <input type="text" id="chat-input" placeholder="Введите запрос..." autocomplete="off">
-                        <button id="send-btn" class="send-btn">➤</button>
+            
+            <div class="sidebar-section">
+                <h3>🧠 Память</h3>
+                <div id="memory-stats" class="memory-stats">
+                    <div class="stat-item">
+                        <span class="stat-label">Записей:</span>
+                        <span class="stat-value" id="memory-count">0</span>
                     </div>
                 </div>
-            </section>
-
-            <!-- Память -->
-            <section id="memory" class="tab">
-                <div class="tab-header">
-                    <h2>🧠 Память</h2>
-                    <button id="add-memory-btn" class="btn btn-primary">+ Добавить</button>
-                    <button id="clear-memory-btn" class="btn btn-danger">Очистить всё</button>
+            </div>
+            
+            <div class="sidebar-section">
+                <h3>📊 Статус</h3>
+                <div class="status-indicator">
+                    <span id="ws-status" class="status-dot"></span>
+                    <span id="ws-text">Подключение...</span>
                 </div>
-                <div id="memory-list" class="list"></div>
-            </section>
+            </div>
+            
+            <div class="sidebar-footer">
+                <button id="settings-btn" class="settings-btn">⚙️ Настройки</button>
+                <button id="logout-btn" class="logout-btn">🚪 Выход</button>
+            </div>
+        </aside>
 
-            <!-- Задачи -->
-            <section id="tasks" class="tab">
-                <div class="tab-header">
-                    <h2>📋 Задачи</h2>
-                    <button id="add-task-btn" class="btn btn-primary">+ Добавить</button>
+        <!-- Основная область чата -->
+        <main class="chat-main">
+            <!-- Заголовок -->
+            <header class="chat-header">
+                <div class="chat-title">
+                    <h1 id="current-chat-title">💬 Новый диалог</h1>
                 </div>
-                <div id="tasks-list" class="list"></div>
-            </section>
+                <div class="chat-actions">
+                    <button id="clear-chat-btn" class="action-btn" title="Очистить чат">🗑️</button>
+                    <button id="export-chat-btn" class="action-btn" title="Экспорт чата">📥</button>
+                </div>
+            </header>
 
-            <!-- Навыки -->
-            <section id="skills" class="tab">
-                <h2>🛠️ Навыки</h2>
-                <div id="skills-list" class="list"></div>
-            </section>
+            <!-- Область сообщений -->
+            <div id="chat-messages" class="chat-messages">
+                <!-- Приветственное сообщение -->
+                <div class="welcome-message">
+                    <div class="welcome-icon">🤖</div>
+                    <h2>Добро пожаловать в Qwen-Claw!</h2>
+                    <p>Я ваш AI-помощник с персистентной памятью.</p>
+                    <div class="welcome-suggestions">
+                        <button class="suggestion-btn" data-query="Расскажи о своих возможностях">
+                            💡 Расскажи о своих возможностях
+                        </button>
+                        <button class="suggestion-btn" data-query="Запомни: я изучаю Go">
+                            🧠 Запомни факт
+                        </button>
+                        <button class="suggestion-btn" data-query="Выполни команду: pwd">
+                            ⚡ Выполнить команду
+                        </button>
+                        <button class="suggestion-btn" data-query="Какие задачи запланированы?">
+                            📋 Показать задачи
+                        </button>
+                    </div>
+                </div>
+            </div>
 
-            <!-- Статус -->
-            <section id="status" class="tab">
-                <h2>📊 Статус системы</h2>
-                <div id="status-content" class="status-grid"></div>
-            </section>
+            <!-- Область ввода -->
+            <div class="chat-input-container">
+                <div class="chat-input-wrapper">
+                    <textarea 
+                        id="chat-input" 
+                        placeholder="Введите сообщение..." 
+                        rows="1"
+                        autocomplete="off"
+                    ></textarea>
+                    <button id="send-btn" class="send-btn" title="Отправить">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M22 2L11 13M22 2L15 22L11 13L2 9L22 2Z"/>
+                        </svg>
+                    </button>
+                </div>
+                <p class="input-hint">
+                    Qwen-Claw может допускать ошибки. Проверяйте важную информацию.
+                </p>
+            </div>
         </main>
+
+        <!-- Правая панель (контекст) -->
+        <aside class="context-panel hidden" id="context-panel">
+            <div class="context-header">
+                <h3>📋 Контекст</h3>
+                <button id="close-context-btn" class="close-btn">×</button>
+            </div>
+            <div id="context-content" class="context-content">
+                <!-- Контекст будет загружен здесь -->
+            </div>
+        </aside>
     </div>
 
-    <!-- Модальное окно для добавления -->
-    <div id="modal" class="modal">
+    <!-- Модальное окно настроек -->
+    <div id="settings-modal" class="modal hidden">
         <div class="modal-content">
-            <span class="close">&times;</span>
-            <h3 id="modal-title"></h3>
-            <form id="modal-form"></form>
+            <div class="modal-header">
+                <h2>⚙️ Настройки</h2>
+                <button class="modal-close" id="close-settings">×</button>
+            </div>
+            <div class="modal-body">
+                <div class="setting-group">
+                    <h3>🎨 Тема</h3>
+                    <select id="theme-select" class="setting-input">
+                        <option value="dark">Тёмная</option>
+                        <option value="light">Светлая</option>
+                        <option value="system">Системная</option>
+                    </select>
+                </div>
+                <div class="setting-group">
+                    <h3>⚡ Скорость печати</h3>
+                    <input type="range" id="typing-speed" min="0" max="50" value="10" class="setting-input">
+                    <span id="typing-speed-value">10 мс/символ</span>
+                </div>
+                <div class="setting-group">
+                    <h3>🧠 Контекст</h3>
+                    <div class="toggle-setting">
+                        <label>
+                            <input type="checkbox" id="show-context-toggle" checked>
+                            Показывать панель контекста
+                        </label>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 
