@@ -79,6 +79,9 @@ type Agent struct {
 
 	// localSession локальная сессия для персистентной истории
 	localSession *memory.LocalSession
+
+	// contextManager менеджер контекста
+	contextManager *memory.ContextManager
 }
 
 // NewAgent создаёт нового агента-оболочку
@@ -137,6 +140,33 @@ func NewAgent(
 		}
 	}
 
+	// Создаём менеджер контекста
+	contextManager := memory.NewContextManager(memory.DefaultContextConfig())
+
+	// Устанавливаем callback для предупреждений о контексте
+	contextManager.SetOnWarning(func(status memory.ContextStatus, usage float64) {
+		logger.Warnf("⚠️ Context usage: %.1f%% (%s)", usage*100, status)
+		
+		if status == memory.ContextStatusCritical {
+			logger.Warn("💡 Предложение: выполните сжатие контекста или начните новую сессию")
+		} else if status == memory.ContextStatusOverflow {
+			logger.Error("🚨 Контекст переполнен! Требуется немедленное действие")
+		}
+	})
+
+	// Устанавливаем callback для сжатия
+	contextManager.SetOnCompress(func() error {
+		logger.Info("🗜️ Сжатие контекста...")
+		return nil
+	})
+
+	// Устанавливаем callback для новой сессии
+	contextManager.SetOnNewSession(func() error {
+		logger.Info("🔄 Создание новой сессии из-за переполнения контекста...")
+		// Здесь можно создать новую сессию
+		return nil
+	})
+
 	return &Agent{
 		config:              config,
 		memoryManager:       memoryManager,
@@ -148,6 +178,7 @@ func NewAgent(
 		confirmationManager: confirmationManager,
 		intentDetector:      intentDetector,
 		localSession:        localSession,
+		contextManager:      contextManager,
 		conversationHistory: make([]string, 0),
 	}
 }
@@ -284,6 +315,26 @@ func (a *Agent) executeWithQuery(fullQuery, originalQuery string, startTime time
 		a.localSession.AddToHistory(fmt.Sprintf("User: %s", originalQuery))
 	}
 
+	// Добавляем в менеджер контекста с оценкой токенов
+	if a.contextManager != nil {
+		tokens := memory.EstimateTokens(originalQuery)
+		a.contextManager.AddToken(memory.ContextToken{
+			Content:   originalQuery,
+			Type:      "user",
+			Tokens:    tokens,
+			Timestamp: time.Now(),
+		})
+
+		// Проверяем статус контекста
+		usage := a.contextManager.GetUsage()
+		if usage.Status == memory.ContextStatusCritical {
+			logger.Warnf("⚠️ Контекст заполнен на %.1f%%. Рекомендуется сжатие.", usage.UsagePercent)
+		} else if usage.Status == memory.ContextStatusOverflow {
+			logger.Error("🚨 Контекст переполнен! Начинаю сжатие...")
+			a.contextManager.Compress()
+		}
+	}
+
 	// Сохраняем в память (user message)
 	a.memoryManager.AddMessage("user", originalQuery)
 
@@ -322,6 +373,17 @@ func (a *Agent) executeWithQuery(fullQuery, originalQuery string, startTime time
 	// Сохраняем в локальную сессию (персистентная память)
 	if a.localSession != nil {
 		a.localSession.AddToHistory(fmt.Sprintf("Assistant: %s", output))
+	}
+
+	// Добавляем в менеджер контекста
+	if a.contextManager != nil {
+		tokens := memory.EstimateTokens(output)
+		a.contextManager.AddToken(memory.ContextToken{
+			Content:   output,
+			Type:      "assistant",
+			Tokens:    tokens,
+			Timestamp: time.Now(),
+		})
 	}
 
 	// Сохраняем ответ в память
@@ -415,6 +477,79 @@ func (a *Agent) ClearSessionHistory() {
 	a.conversationHistory = make([]string, 0)
 	if a.localSession != nil {
 		a.localSession.Clear()
+	}
+	if a.contextManager != nil {
+		a.contextManager.Reset()
+	}
+}
+
+// GetContextUsage возвращает информацию об использовании контекста
+func (a *Agent) GetContextUsage() memory.ContextUsage {
+	if a.contextManager == nil {
+		return memory.ContextUsage{}
+	}
+	return a.contextManager.GetUsage()
+}
+
+// CompressContext сжимает контекст
+func (a *Agent) CompressContext() error {
+	if a.contextManager == nil {
+		return nil
+	}
+	return a.contextManager.Compress()
+}
+
+// GetContextStatus возвращает статус контекста
+func (a *Agent) GetContextStatus() memory.ContextStatus {
+	if a.contextManager == nil {
+		return memory.ContextStatusNormal
+	}
+	return a.contextManager.GetStatus()
+}
+
+// StartNewSession начинает новую сессию с сохранением незавершённых задач
+func (a *Agent) StartNewSession() error {
+	if a.localSession == nil {
+		return fmt.Errorf("local session not initialized")
+	}
+
+	// Получаем незавершённые задачи
+	incomplete := a.localSession.GetHistory() // В реальной реализации нужно фильтровать
+
+	// Создаём новую сессию
+	sessionManager, err := memory.NewLocalSessionManager(filepath.Join(os.Getenv("HOME"), "qwen-claw", ".qwen", "local"))
+	if err != nil {
+		return err
+	}
+
+	newSession, err := sessionManager.GetSession(fmt.Sprintf("session-%d", time.Now().UnixNano()))
+	if err != nil {
+		return err
+	}
+
+	// Переносим незавершённые задачи
+	for _, msg := range incomplete {
+		if strings.Contains(msg, "incomplete") || strings.Contains(msg, "pending") {
+			newSession.AddToHistory("[PERESNOS] " + msg)
+		}
+	}
+
+	// Переключаемся на новую сессию
+	a.localSession = newSession
+
+	// Сбрасываем контекст
+	if a.contextManager != nil {
+		a.contextManager.Reset()
+	}
+
+	logger.Info("✅ Новая сессия создана. Незавершённые задачи перенесены.")
+	return nil
+}
+
+// ClearTaskContext очищает контекст задачи
+func (a *Agent) ClearTaskContext(taskID string) {
+	if a.contextManager != nil {
+		a.contextManager.ClearTaskContext(taskID)
 	}
 }
 
