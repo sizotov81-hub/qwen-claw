@@ -74,8 +74,11 @@ type Agent struct {
 	// intentDetector детектор намерений
 	intentDetector *IntentDetector
 
-	// conversationHistory история разговора
+	// conversationHistory история разговора (RAM кэш)
 	conversationHistory []string
+
+	// localSession локальная сессия для персистентной истории
+	localSession *memory.LocalSession
 }
 
 // NewAgent создаёт нового агента-оболочку
@@ -117,6 +120,23 @@ func NewAgent(
 	// Создаём детектор намерений
 	intentDetector := NewIntentDetector()
 
+	// Создаём локальную сессию для истории диалогов
+	localSessionDir := filepath.Join(os.Getenv("HOME"), "qwen-claw", ".qwen", "local")
+	sessionManager, err := memory.NewLocalSessionManager(localSessionDir)
+	var localSession *memory.LocalSession
+	if err != nil {
+		// Если ошибка — сессия не создаётся, но агент работает
+		if config.Debug {
+			logger.Infof("Warning: failed to create local session manager: %v", err)
+		}
+	} else {
+		// Используем "default" как ID сессии по умолчанию
+		localSession, _ = sessionManager.GetSession("default")
+		if config.Debug {
+			logger.Infof("Local session loaded: %s", localSession.ID)
+		}
+	}
+
 	return &Agent{
 		config:              config,
 		memoryManager:       memoryManager,
@@ -127,6 +147,7 @@ func NewAgent(
 		scheduler:           nil, // будет установлен позже через SetScheduler
 		confirmationManager: confirmationManager,
 		intentDetector:      intentDetector,
+		localSession:        localSession,
 		conversationHistory: make([]string, 0),
 	}
 }
@@ -255,8 +276,13 @@ func (a *Agent) formatMemoryContext(result *memory.SearchResult) string {
 
 // executeWithQuery выполняет запрос с подготовленным query
 func (a *Agent) executeWithQuery(fullQuery, originalQuery string, startTime time.Time) (string, error) {
-	// Добавляем сообщение пользователя в историю
+	// Добавляем сообщение пользователя в историю (RAM)
 	a.conversationHistory = append(a.conversationHistory, fmt.Sprintf("User: %s", originalQuery))
+
+	// Сохраняем в локальную сессию (персистентная память)
+	if a.localSession != nil {
+		a.localSession.AddToHistory(fmt.Sprintf("User: %s", originalQuery))
+	}
 
 	// Сохраняем в память (user message)
 	a.memoryManager.AddMessage("user", originalQuery)
@@ -279,19 +305,24 @@ func (a *Agent) executeWithQuery(fullQuery, originalQuery string, startTime time
 
 	// Запускаем qwen cli
 	output, err := a.executeQwen(ctx, cmdArgs, cleanEnv)
-	
+
 	// Записываем метрики в антидеградацию
 	duration := time.Since(startTime)
 	a.RecordTaskMetric(originalQuery, duration, 1, nil, err == nil)
-	
+
 	if err != nil {
 		// Сохраняем ошибку в память
 		a.memoryManager.AddMessage("error", fmt.Sprintf("Query: %s\nError: %v", originalQuery, err))
 		return "", fmt.Errorf("qwen cli failed: %w", err)
 	}
 
-	// Добавляем ответ в историю
+	// Добавляем ответ в историю (RAM)
 	a.conversationHistory = append(a.conversationHistory, fmt.Sprintf("Assistant: %s", output))
+
+	// Сохраняем в локальную сессию (персистентная память)
+	if a.localSession != nil {
+		a.localSession.AddToHistory(fmt.Sprintf("Assistant: %s", output))
+	}
 
 	// Сохраняем ответ в память
 	a.memoryManager.AddMessage("assistant", output)
@@ -351,6 +382,13 @@ func (a *Agent) buildCommandArgs(query string) []string {
 
 // getRecentHistory возвращает последние N сообщений истории
 func (a *Agent) getRecentHistory(n int) string {
+	if a.localSession != nil {
+		// Используем персистентную историю
+		recent := a.localSession.GetRecentHistory(n)
+		return strings.Join(recent, "\n")
+	}
+
+	// Fallback на RAM историю
 	if len(a.conversationHistory) == 0 {
 		return ""
 	}
@@ -362,6 +400,22 @@ func (a *Agent) getRecentHistory(n int) string {
 
 	recent := a.conversationHistory[start:]
 	return strings.Join(recent, "\n")
+}
+
+// GetSessionHistory возвращает всю историю сессии
+func (a *Agent) GetSessionHistory() []string {
+	if a.localSession != nil {
+		return a.localSession.GetHistory()
+	}
+	return a.conversationHistory
+}
+
+// ClearSessionHistory очищает историю сессии
+func (a *Agent) ClearSessionHistory() {
+	a.conversationHistory = make([]string, 0)
+	if a.localSession != nil {
+		a.localSession.Clear()
+	}
 }
 
 // executeQwen выполняет qwen cli команду
