@@ -24,21 +24,24 @@ const (
 type Skill struct {
 	// Name имя навыка
 	Name string `json:"name"`
-	
+
 	// Description описание навыка
 	Description string `json:"description"`
-	
+
 	// Type тип навыка
 	Type SkillType `json:"type"`
-	
+
 	// EntryPoint точка входа (для external/script)
 	EntryPoint string `json:"entry_point,omitempty"`
-	
+
 	// Commands список команд, которые обрабатывает навык
 	Commands []string `json:"commands"`
-	
+
 	// Enabled включён ли навык
 	Enabled bool `json:"enabled"`
+
+	// AutoLoad загружать ли навык автоматически при старте
+	AutoLoad bool `json:"auto_load,omitempty"`
 }
 
 // SkillRequest запрос к навыку
@@ -79,6 +82,12 @@ type Engine struct {
 	// skills загруженные навыки
 	skills map[string]*Skill
 
+	// injector инжектор для селективной загрузки
+	injector *SkillInjector
+
+	// registryClient клиент реестра
+	registryClient *RegistryClient
+
 	// memoryManager менеджер памяти (опционально)
 	memoryManager interface{}
 }
@@ -94,8 +103,9 @@ func NewEngine(skillsDir string) *Engine {
 // NewAgentSkillEngine создаёт движок навыков для агента (с загруженными builtin навыками)
 func NewAgentSkillEngine() *Engine {
 	e := &Engine{
-		skillsDir: "",
 		skills:    make(map[string]*Skill),
+		injector:  NewSkillInjector(DefaultInjectorConfig()),
+		registryClient: NewRegistryClient(DefaultRegistryConfig()),
 	}
 	e.loadBuiltinSkills()
 	return e
@@ -773,4 +783,114 @@ func (e *Engine) List() []*Skill {
 // Get возвращает навык по имени
 func (e *Engine) Get(name string) *Skill {
 	return e.skills[name]
+}
+
+// GetAutoLoadSkills возвращает список навыков с включённой автозагрузкой
+func (e *Engine) GetAutoLoadSkills() []*Skill {
+	result := make([]*Skill, 0)
+	for _, skill := range e.skills {
+		if skill.AutoLoad && skill.Enabled {
+			result = append(result, skill)
+		}
+	}
+	return result
+}
+
+// InjectSkills возвращает релевантные навыки для запроса
+func (e *Engine) InjectSkills(query string) ([]*Skill, error) {
+	if e.injector == nil {
+		return []*Skill{}, nil
+	}
+	return e.injector.InjectSkills(query)
+}
+
+// GetSkillPrompt возвращает промпт для навыка
+func (e *Engine) GetSkillPrompt(skill *Skill) (string, error) {
+	if e.injector == nil {
+		return "", fmt.Errorf("injector not initialized")
+	}
+	return e.injector.GetSkillPrompt(skill)
+}
+
+// FormatSkillsForPrompt форматирует навыки для вставки в промпт
+func (e *Engine) FormatSkillsForPrompt(skills []*Skill) (string, error) {
+	if e.injector == nil {
+		return "", nil
+	}
+	return e.injector.FormatSkillsForPrompt(skills)
+}
+
+// InstallSkill устанавливает навык из реестра
+func (e *Engine) InstallSkill(name string) error {
+	if e.injector == nil {
+		return fmt.Errorf("injector not initialized")
+	}
+	if e.registryClient == nil {
+		return fmt.Errorf("registry client not initialized")
+	}
+	return e.injector.InstallSkill(name, e.registryClient)
+}
+
+// UninstallSkill удаляет навык
+func (e *Engine) UninstallSkill(name string) error {
+	if e.injector == nil {
+		return fmt.Errorf("injector not initialized")
+	}
+	return e.injector.UninstallSkill(name)
+}
+
+// EnableSkill включает навык
+func (e *Engine) EnableSkill(name string) error {
+	if e.injector == nil {
+		return fmt.Errorf("injector not initialized")
+	}
+	return e.injector.EnableSkill(name)
+}
+
+// DisableSkill отключает навык
+func (e *Engine) DisableSkill(name string) error {
+	if e.injector == nil {
+		return fmt.Errorf("injector not initialized")
+	}
+	return e.injector.DisableSkill(name)
+}
+
+// ListSkills возвращает список всех доступных навыков
+func (e *Engine) ListSkills() ([]*Skill, error) {
+	if e.injector == nil {
+		return []*Skill{}, nil
+	}
+	return e.injector.ListSkills()
+}
+
+// GetSkillInfo возвращает информацию о навыке
+func (e *Engine) GetSkillInfo(name string) (*Skill, error) {
+	if e.injector == nil {
+		return nil, fmt.Errorf("injector not initialized")
+	}
+	return e.injector.GetSkillInfo(name)
+}
+
+// SearchSkills ищет навыки в реестре
+func (e *Engine) SearchSkills(query string, category string, tags []string) ([]RegistrySkill, error) {
+	if e.registryClient == nil {
+		return []RegistrySkill{}, nil
+	}
+	return e.registryClient.Search(query, category, tags)
+}
+
+// ListPopularSkills возвращает популярные навыки из реестра
+func (e *Engine) ListPopularSkills(limit int) ([]RegistrySkill, error) {
+	if e.registryClient == nil {
+		return []RegistrySkill{}, nil
+	}
+	return e.registryClient.ListPopular(limit)
+}
+
+// CheckForUpdates проверяет наличие обновлений
+func (e *Engine) CheckForUpdates() ([]string, error) {
+	if e.injector == nil || e.registryClient == nil {
+		return []string{}, nil
+	}
+	return e.injector.CheckForUpdates(e.registryClient)
 }

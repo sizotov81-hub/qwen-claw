@@ -3,6 +3,7 @@
   "description": "Навык разработчика для работы с кодом проекта qwen-claw",
   "version": "1.0.0",
   "enabled": true,
+  "auto_load": true,
   "type": "system",
   "commands": ["dev", "develop", "code", "refactor"],
   "entry_point": "developer.go",
