@@ -151,7 +151,7 @@ function setupEventListeners() {
 // ============================================
 // Аутентификация
 // ============================================
-function handleAuth(e) {
+async function handleAuth(e) {
     e.preventDefault();
     
     const secret = elements.secretInput.value.trim();
@@ -160,14 +160,33 @@ function handleAuth(e) {
         return;
     }
     
-    // Сохраняем токен
-    saveToken(secret);
-    
-    // Показываем основной интерфейс
-    showMainApp();
-    
-    // Подключаем WebSocket
-    connectWebSocket();
+    // Пробуем аутентифицироваться через API
+    try {
+        const response = await fetch('/api/auth', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ secret: secret })
+        });
+        
+        const data = await response.json();
+        
+        if (response.ok && data.success) {
+            // Сохраняем JWT токен
+            saveToken(data.data.token);
+            
+            // Показываем основной интерфейс
+            showMainApp();
+            
+            // Подключаем WebSocket
+            connectWebSocket();
+        } else {
+            showAuthError(data.error || 'Неверная секретная фраза');
+        }
+    } catch (err) {
+        showAuthError('Ошибка подключения: ' + err.message);
+    }
 }
 
 function showAuthError(message) {
@@ -206,7 +225,7 @@ function connectWebSocket() {
     updateWSStatus('connecting');
     
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}/ws`;
+    const wsUrl = `${protocol}//${window.location.host}/ws?token=${encodeURIComponent(state.token)}`;
     
     state.ws = new WebSocket(wsUrl);
     
