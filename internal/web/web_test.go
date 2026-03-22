@@ -95,10 +95,15 @@ func TestServerStop(t *testing.T) {
 	// Stop должен корректно обрабатывать случай, когда сервер не запущен
 	// Просто проверяем, что метод существует и не паникует при nil server
 	assert.NotNil(t, server)
-	
+
 	// Проверяем, что config установлен правильно
 	assert.Equal(t, "127.0.0.1", server.config.Host)
 	assert.Equal(t, 18080, server.config.Port)
+
+	// Проверяем Stop с context
+	ctx := context.Background()
+	err := server.Stop(ctx)
+	assert.NoError(t, err)
 }
 
 func TestAPIResponse(t *testing.T) {

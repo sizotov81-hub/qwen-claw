@@ -42,17 +42,36 @@ type Server struct {
 	agent     *agent.Agent
 	memory    *memory.Manager
 	scheduler *scheduler.Scheduler
-	wsClients map[*websocket.Conn]bool
+	wsClients map[*websocket.Conn]*wsClient
 	wsMu      sync.RWMutex
 	authData  string // Для хранения secret phrase
 }
 
-// upgrader для WebSocket
-var upgrader = websocket.Upgrader{
-	ReadBufferSize:  1024,
-	WriteBufferSize: 1024,
-	CheckOrigin:     func(r *http.Request) bool { return true },
+// wsClient отслеживает состояние WebSocket клиента
+type wsClient struct {
+	conn         *websocket.Conn
+	lastMessage  time.Time
+	messageCount int
+	mu           sync.RWMutex
 }
+
+// upgrader для WebSocket с защитой
+var upgrader = websocket.Upgrader{
+	ReadBufferSize:     1024 * 1024,      // 1MB лимит на сообщение
+	WriteBufferSize:    1024 * 1024,
+	CheckOrigin:        func(r *http.Request) bool { return true },
+	EnableCompression:  true,              // Включаем сжатие
+	HandshakeTimeout:   10 * time.Second,  // Таймаут рукопожатия
+}
+
+// Константы для rate limiting
+const (
+	wsMaxMessageCount  = 100              // Максимум сообщений в минуту
+	wsRateLimitWindow  = time.Minute      // Окно для rate limiting
+	wsMaxMessageSize   = 1024 * 1024      // 1MB макс размер сообщения
+	wsWriteTimeout     = 10 * time.Second // Таймаут записи
+	wsPongTimeout      = 60 * time.Second // Таймаут pong
+)
 
 // NewServer создаёт новый веб-сервер
 func NewServer(
@@ -66,7 +85,7 @@ func NewServer(
 		agent:     agentInstance,
 		memory:    memoryManager,
 		scheduler: schedulerInstance,
-		wsClients: make(map[*websocket.Conn]bool),
+		wsClients: make(map[*websocket.Conn]*wsClient),
 		authData:  config.SecretPhrase,
 	}
 }
@@ -152,9 +171,10 @@ func (s *Server) Start() error {
 }
 
 // Stop останавливает веб-сервер
-func (s *Server) Stop() error {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+func (s *Server) Stop(ctx context.Context) error {
+	if s.server == nil {
+		return nil
+	}
 	return s.server.Shutdown(ctx)
 }
 
@@ -465,8 +485,18 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Устанавливаем лимит на размер сообщения
+	conn.SetReadLimit(wsMaxMessageSize)
+
+	// Создаём клиента с rate limiting
+	client := &wsClient{
+		conn:         conn,
+		lastMessage:  time.Now(),
+		messageCount: 0,
+	}
+
 	s.wsMu.Lock()
-	s.wsClients[conn] = true
+	s.wsClients[conn] = client
 	s.wsMu.Unlock()
 
 	defer func() {
@@ -476,7 +506,34 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		conn.Close()
 	}()
 
+	// Устанавливаем таймауты
+	conn.SetReadDeadline(time.Now().Add(wsPongTimeout))
+	conn.SetPongHandler(func(string) error {
+		conn.SetReadDeadline(time.Now().Add(wsPongTimeout))
+		return nil
+	})
+
+	// Отправляем ping для keepalive
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			if err := conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(wsWriteTimeout)); err != nil {
+				return
+			}
+		}
+	}()
+
 	for {
+		// Проверяем rate limit
+		if !client.checkRateLimit() {
+			s.sendWS(conn, map[string]interface{}{
+				"type":    "error",
+				"message": "Rate limit exceeded. Please slow down.",
+			})
+			continue
+		}
+
 		_, message, err := conn.ReadMessage()
 		if err != nil {
 			break
@@ -493,30 +550,30 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			case "chat":
 				if text, ok := msg["message"].(string); ok {
 					ctx := context.Background()
-					
+
 					// Отправляем статус "thinking"
 					s.sendWS(conn, map[string]interface{}{
 						"type":    "thinking",
 						"message": "🤔 Думаю...",
 					})
-					
+
 					// Выполняем запрос
 					response, err := s.agent.Run(ctx, text)
-					
+
 					if err != nil {
 						s.sendWS(conn, map[string]interface{}{
 							"type":    "error",
 							"message": err.Error(),
 						})
 					} else {
-						// Отправляем ответ с эффектом печати (посимвольно)
+						// Отправляем ответ
 						s.sendWS(conn, map[string]interface{}{
 							"type":      "chat_response",
 							"message":   response,
 							"timestamp": time.Now().Format(time.RFC3339),
 							"streaming": true,
 						})
-						
+
 						// Проверяем ожидающие действия
 						actions := s.agent.GetPendingActions()
 						if len(actions) > 0 {
@@ -531,6 +588,28 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+}
+
+// checkRateLimit проверяет rate limit для клиента
+func (c *wsClient) checkRateLimit() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	now := time.Now()
+
+	// Сбрасываем счётчик если окно истекло
+	if now.Sub(c.lastMessage) > wsRateLimitWindow {
+		c.messageCount = 0
+		c.lastMessage = now
+	}
+
+	// Проверяем лимит
+	if c.messageCount >= wsMaxMessageCount {
+		return false
+	}
+
+	c.messageCount++
+	return true
 }
 
 // broadcastWS рассылает сообщение всем WebSocket клиентам

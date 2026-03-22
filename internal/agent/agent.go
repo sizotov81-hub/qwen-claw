@@ -561,21 +561,26 @@ func (a *Agent) executeQwen(ctx context.Context, args []string, env []string) (s
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	cmd.Stdin = os.Stdin
-	cmd.Env = env // Используем переданное окружение
+	cmd.Env = env
 
-	if err := cmd.Run(); err != nil {
-		// Возвращаем output даже при ошибке (qwen может вывести полезную информацию)
-		output := strings.TrimSpace(stdout.String())
-		if output == "" {
-			output = strings.TrimSpace(stderr.String())
-		}
-		if output == "" {
-			output = err.Error()
-		}
-		return output, err
+	// Запускаем команду
+	if err := cmd.Start(); err != nil {
+		return "", fmt.Errorf("failed to start: %w", err)
 	}
 
-	return strings.TrimSpace(stdout.String()), nil
+	// Ждём завершения с обработкой ошибок
+	err := cmd.Wait()
+
+	// Возвращаем output даже при ошибке
+	output := strings.TrimSpace(stdout.String())
+	if output == "" {
+		output = strings.TrimSpace(stderr.String())
+	}
+	if output == "" && err != nil {
+		output = err.Error()
+	}
+
+	return output, err
 }
 
 // RunInteractive запускает интерактивную сессию с qwen cli

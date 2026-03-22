@@ -215,10 +215,16 @@ func (s *Scheduler) Stop() {
 		return
 	}
 	s.running = false
+	stopChan := s.stopChan
 	s.mu.Unlock()
 
-	close(s.stopChan)
-	s.stopChan = make(chan struct{})
+	// Закрываем канал вне блокировки
+	select {
+	case <-stopChan:
+		// Уже закрыт
+	default:
+		close(stopChan)
+	}
 }
 
 // runLoop основной цикл планировщика
@@ -392,19 +398,24 @@ func (s *Scheduler) matchField(field string, value, min, max int) bool {
 
 // executeTask выполняет задачу
 func (s *Scheduler) executeTask(task *Task) {
-	// Обновляем статус задачи
+	// Вычисляем следующее выполнение ДО блокировки (calculateNextRun не требует блокировки)
+	nextRun := s.calculateNextRun(task.Schedule, time.Now())
+	now := time.Now()
+
+	// Обновляем статус задачи — короткая блокировка
 	s.mu.Lock()
-	task.LastRun = ptrTime(time.Now())
-	task.NextRun = s.calculateNextRun(task.Schedule, time.Now())
+	task.LastRun = ptrTime(now)
+	task.NextRun = nextRun
 	task.RunCount++
-	task.Updated = time.Now()
-	_ = s.saveTasks()
+	task.Updated = now
+	// Сохраняем задачи асинхронно чтобы не блокировать
+	go s.saveTasks()
 	s.mu.Unlock()
 
-	// Выполняем задачу
+	// Выполняем задачу ВНЕ блокировки
 	result := &TaskResult{
 		TaskID:  task.ID,
-		Started: time.Now(),
+		Started: now,
 	}
 
 	ctx := context.Background()
@@ -419,7 +430,7 @@ func (s *Scheduler) executeTask(task *Task) {
 		result.Output = output
 	}
 
-	// Сохраняем результат
+	// Сохраняем результат — короткая блокировка
 	s.mu.Lock()
 	s.results = append(s.results, result)
 	// Храним только последние 100 результатов

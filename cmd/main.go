@@ -6,8 +6,11 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/user/qwen-claw/internal/agent"
@@ -1406,7 +1409,31 @@ func runWebUI(cmd *cobra.Command, args []string) error {
 		sched,
 	)
 
-	return webServer.Start()
+	// Запускаем сервер в горутине
+	go func() {
+		logger.Info("🌐 Web UI starting...")
+		if err := webServer.Start(); err != nil {
+			logger.Errorf("Web UI error: %v", err)
+		}
+	}()
+
+	// Ожидаем сигнал завершения
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+
+	logger.Info("🛑 Graceful shutdown...")
+
+	// Останавливаем веб-сервер с таймаутом
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := webServer.Stop(ctx); err != nil {
+		logger.Errorf("Web UI shutdown error: %v", err)
+	}
+
+	logger.Info("✅ Web UI stopped")
+	return nil
 }
 
 // degradationReport показывает отчёт о деградации
