@@ -80,6 +80,15 @@ type Agent struct {
 	// localSession локальная сессия для персистентной истории
 	localSession *memory.LocalSession
 
+	// eventStore хранилище событий сессии (Event-based)
+	eventStore *memory.SessionEventStore
+
+	// sessionStoreManager менеджер хранилищ сессий
+	sessionStoreManager *memory.SessionStoreManager
+
+	// compactor компaction сессий
+	compactor *memory.Compactor
+
 	// contextManager менеджер контекста
 	contextManager *memory.ContextManager
 }
@@ -124,7 +133,9 @@ func NewAgent(
 	intentDetector := NewIntentDetector()
 
 	// Создаём локальную сессию для истории диалогов
-	localSessionDir := filepath.Join(os.Getenv("HOME"), "qwen-claw", ".qwen", "local")
+	// Используем относительный путь от рабочей директории
+	workingDir, _ := os.Getwd()
+	localSessionDir := filepath.Join(workingDir, ".qwen", "local")
 	sessionManager, err := memory.NewLocalSessionManager(localSessionDir)
 	var localSession *memory.LocalSession
 	if err != nil {
@@ -139,6 +150,25 @@ func NewAgent(
 			logger.Infof("Local session loaded: %s", localSession.ID)
 		}
 	}
+
+	// Создаём хранилище событий сессии (Event-based)
+	sessionStoreDir := filepath.Join(workingDir, ".qwen", "sessions")
+	sessionStoreManager, err := memory.NewSessionStoreManager(sessionStoreDir)
+	var eventStore *memory.SessionEventStore
+	if err != nil {
+		if config.Debug {
+			logger.Infof("Warning: failed to create session store manager: %v", err)
+		}
+	} else {
+		// Используем "default" как ID сессии по умолчанию
+		eventStore, _ = sessionStoreManager.GetStore("default")
+		if config.Debug {
+			logger.Infof("Event store loaded: %s", eventStore.SessionID)
+		}
+	}
+
+	// Создаём компactor для автосуммаризации
+	compactor := memory.NewCompactor(memory.DefaultCompactionConfig())
 
 	// Создаём менеджер контекста
 	contextManager := memory.NewContextManager(memory.DefaultContextConfig())
@@ -178,6 +208,9 @@ func NewAgent(
 		confirmationManager: confirmationManager,
 		intentDetector:      intentDetector,
 		localSession:        localSession,
+		eventStore:          eventStore,
+		sessionStoreManager: sessionStoreManager,
+		compactor:           compactor,
 		contextManager:      contextManager,
 		conversationHistory: make([]string, 0),
 	}
@@ -315,6 +348,19 @@ func (a *Agent) executeWithQuery(fullQuery, originalQuery string, startTime time
 		a.localSession.AddToHistory(fmt.Sprintf("User: %s", originalQuery))
 	}
 
+	// Сохраняем в event store (Event-based сессия)
+	if a.eventStore != nil {
+		tokens := memory.EstimateTokens(originalQuery)
+		a.eventStore.AddEvent(memory.EventUserMessage, originalQuery, nil, tokens)
+		
+		// Проверяем необходимость компaction
+		if a.compactor != nil {
+			if err := a.compactor.Compact(a.eventStore, memory.SimpleSummaryGenerator); err != nil {
+				logger.Warnf("Compaction warning: %v", err)
+			}
+		}
+	}
+
 	// Добавляем в менеджер контекста с оценкой токенов
 	if a.contextManager != nil {
 		tokens := memory.EstimateTokens(originalQuery)
@@ -375,6 +421,12 @@ func (a *Agent) executeWithQuery(fullQuery, originalQuery string, startTime time
 		a.localSession.AddToHistory(fmt.Sprintf("Assistant: %s", output))
 	}
 
+	// Сохраняем в event store (Event-based сессия)
+	if a.eventStore != nil {
+		tokens := memory.EstimateTokens(output)
+		a.eventStore.AddEvent(memory.EventAssistantReply, output, nil, tokens)
+	}
+
 	// Добавляем в менеджер контекста
 	if a.contextManager != nil {
 		tokens := memory.EstimateTokens(output)
@@ -428,13 +480,9 @@ func (a *Agent) buildCommandArgs(query string) []string {
 		args = append(args, "--debug")
 	}
 
-	// Добавляем историю диалога для контекста (последние 10 сообщений)
-	if len(a.conversationHistory) > 0 {
-		history := a.getRecentHistory(10)
-		if history != "" {
-			args = append(args, "--context", history)
-		}
-	}
+	// Qwen CLI не поддерживает --context флаг, поэтому история передаётся
+	// через локальную сессию и сохраняется автоматически через --chat-recording
+	// при использовании интерактивного режима
 
 	// Добавляем запрос как позиционный аргумент
 	args = append(args, query)
@@ -472,11 +520,46 @@ func (a *Agent) GetSessionHistory() []string {
 	return a.conversationHistory
 }
 
+// GetSessionEvents возвращает все события сессии (Event-based)
+func (a *Agent) GetSessionEvents() []memory.Event {
+	if a.eventStore == nil {
+		return []memory.Event{}
+	}
+	return a.eventStore.GetEvents()
+}
+
+// GetRecentSessionEvents возвращает последние N событий сессии
+func (a *Agent) GetRecentSessionEvents(n int) []memory.Event {
+	if a.eventStore == nil {
+		return []memory.Event{}
+	}
+	return a.eventStore.GetRecentEvents(n)
+}
+
+// GetSessionWithSummary возвращает суммаризацию + последние события
+func (a *Agent) GetSessionWithSummary() (string, []memory.Event) {
+	if a.eventStore == nil {
+		return "", []memory.Event{}
+	}
+	return a.eventStore.GetEventsWithSummary()
+}
+
+// GetCompactionStatus возвращает статус компaction сессии
+func (a *Agent) GetCompactionStatus() memory.CompactionStatus {
+	if a.compactor == nil || a.eventStore == nil {
+		return memory.CompactionStatus{}
+	}
+	return a.compactor.GetCompactionStatus(a.eventStore)
+}
+
 // ClearSessionHistory очищает историю сессии
 func (a *Agent) ClearSessionHistory() {
 	a.conversationHistory = make([]string, 0)
 	if a.localSession != nil {
 		a.localSession.Clear()
+	}
+	if a.eventStore != nil {
+		a.eventStore.Clear()
 	}
 	if a.contextManager != nil {
 		a.contextManager.Reset()
@@ -499,6 +582,24 @@ func (a *Agent) CompressContext() error {
 	return a.contextManager.Compress()
 }
 
+// CompactSession выполняет компaction сессии с суммаризацией
+func (a *Agent) CompactSession(summary string) error {
+	if a.eventStore == nil {
+		return fmt.Errorf("event store not initialized")
+	}
+	if a.compactor == nil {
+		return fmt.Errorf("compactor not initialized")
+	}
+	
+	// Выполняем компaction с сохранением последних 20 событий
+	if err := a.eventStore.Compact(summary, 20); err != nil {
+		return err
+	}
+	
+	logger.Info("✅ Session compacted successfully")
+	return nil
+}
+
 // GetContextStatus возвращает статус контекста
 func (a *Agent) GetContextStatus() memory.ContextStatus {
 	if a.contextManager == nil {
@@ -516,8 +617,9 @@ func (a *Agent) StartNewSession() error {
 	// Получаем незавершённые задачи
 	incomplete := a.localSession.GetHistory() // В реальной реализации нужно фильтровать
 
-	// Создаём новую сессию
-	sessionManager, err := memory.NewLocalSessionManager(filepath.Join(os.Getenv("HOME"), "qwen-claw", ".qwen", "local"))
+	// Создаём новую сессию — используем относительный путь от рабочей директории
+	workingDir, _ := os.Getwd()
+	sessionManager, err := memory.NewLocalSessionManager(filepath.Join(workingDir, ".qwen", "local"))
 	if err != nil {
 		return err
 	}
@@ -530,7 +632,7 @@ func (a *Agent) StartNewSession() error {
 	// Переносим незавершённые задачи
 	for _, msg := range incomplete {
 		if strings.Contains(msg, "incomplete") || strings.Contains(msg, "pending") {
-			newSession.AddToHistory("[PERESNOS] " + msg)
+			newSession.AddToHistory("[PERENOS] " + msg)
 		}
 	}
 
