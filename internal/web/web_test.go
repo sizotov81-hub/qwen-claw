@@ -52,7 +52,7 @@ func TestNewServer(t *testing.T) {
 			Host: "127.0.0.1",
 			Port: 8080,
 		},
-		nil, nil, nil,
+		nil, nil, nil, nil,
 	)
 
 	assert.NotNil(t, server)
@@ -90,7 +90,7 @@ func TestServerStop(t *testing.T) {
 			Host: "127.0.0.1",
 			Port: 18080,
 		},
-		nil, nil, nil,
+		nil, nil, nil, nil,
 	)
 
 	// Stop должен корректно обрабатывать случай, когда сервер не запущен

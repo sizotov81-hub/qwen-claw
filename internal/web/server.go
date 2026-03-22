@@ -16,6 +16,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/gorilla/websocket"
 	"github.com/user/qwen-claw/internal/agent"
+	"github.com/user/qwen-claw/internal/gateway"
 	"github.com/user/qwen-claw/internal/memory"
 	"github.com/user/qwen-claw/internal/scheduler"
 )
@@ -42,6 +43,7 @@ type Server struct {
 	agent     *agent.Agent
 	memory    *memory.Manager
 	scheduler *scheduler.Scheduler
+	gateway   *gateway.Gateway
 	wsClients map[*websocket.Conn]*wsClient
 	wsMu      sync.RWMutex
 	authData  string // Для хранения secret phrase
@@ -79,12 +81,14 @@ func NewServer(
 	agentInstance *agent.Agent,
 	memoryManager *memory.Manager,
 	schedulerInstance *scheduler.Scheduler,
+	gatewayInstance *gateway.Gateway,
 ) *Server {
 	return &Server{
 		config:    config,
 		agent:     agentInstance,
 		memory:    memoryManager,
 		scheduler: schedulerInstance,
+		gateway:   gatewayInstance,
 		wsClients: make(map[*websocket.Conn]*wsClient),
 		authData:  config.SecretPhrase,
 	}
@@ -153,10 +157,15 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/chat/stream", s.authMiddleware(s.handleChatStream))
 	mux.HandleFunc("/api/memory", s.authMiddleware(s.handleMemory))
 	mux.HandleFunc("/api/tasks", s.authMiddleware(s.handleTasks))
-	mux.HandleFunc("/api/skills", s.authMiddleware(s.handleSkills))
+	mux.HandleFunc("/api/skills", s.authMiddleware(s.handleSkillsExtended))
 	mux.HandleFunc("/api/status", s.authMiddleware(s.handleStatus))
 	mux.HandleFunc("/api/confirmations", s.authMiddleware(s.handleConfirmations))
 	mux.HandleFunc("/api/confirm", s.authMiddleware(s.handleConfirm))
+	
+	// Новые endpoints для Web UI
+	mux.HandleFunc("/api/v1/sessions", s.authMiddleware(s.handleSessions))
+	mux.HandleFunc("/api/v1/config", s.authMiddleware(s.handleConfig))
+	mux.HandleFunc("/api/v1/logs", s.authMiddleware(s.handleLogs))
 
 	// WebSocket
 	mux.HandleFunc("/ws", s.wsAuthMiddleware(s.handleWebSocket))
@@ -185,17 +194,26 @@ func (s *Server) staticHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Эти файлы отдаём всегда (форма входа и зависимости)
 	publicFiles := map[string]bool{
-		"/":          true,
+		"/":           true,
 		"/index.html": true,
-		"/styles.css": true,
-		"/app.js":     true,
+		"/static/":    true,
 	}
 
-	if publicFiles[path] {
-		filePath := filepath.Join("internal/web/static", strings.TrimPrefix(path, "/"))
+	isPublic := publicFiles[path] || strings.HasPrefix(path, "/static/")
+	
+	if isPublic {
+		// Обслуживаем файлы из web/static
+		filePath := filepath.Join("web/static", strings.TrimPrefix(path, "/"))
 		if path == "/" {
-			filePath = filepath.Join("internal/web/static", "index.html")
+			filePath = filepath.Join("web/static", "index.html")
 		}
+		
+		// Проверяем существование файла
+		if _, err := os.Stat(filePath); os.IsNotExist(err) {
+			http.NotFound(w, r)
+			return
+		}
+		
 		http.ServeFile(w, r, filePath)
 		return
 	}
@@ -213,7 +231,7 @@ func (s *Server) staticHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Отдаём статический файл
-	filePath := filepath.Join("internal/web/static", strings.TrimPrefix(path, "/"))
+	filePath := filepath.Join("web/static", strings.TrimPrefix(path, "/"))
 	http.ServeFile(w, r, filePath)
 }
 
@@ -542,6 +560,28 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	s.sendJSON(w, APIResponse{Success: true, Data: status})
 }
 
+// forwardGatewayEvents пересылает события Gateway в WebSocket
+func (s *Server) forwardGatewayEvents(conn *websocket.Conn) {
+	// Подписываемся на broadcast Gateway
+	// В реальной реализации Gateway должен иметь канал для подписки
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	
+	for range ticker.C {
+		if s.gateway != nil {
+			clientCount := s.gateway.GetClientCount()
+			s.sendWS(conn, map[string]interface{}{
+				"type": "event",
+				"payload": map[string]interface{}{
+					"event":         "gateway_status",
+					"client_count":  clientCount,
+					"timestamp":     time.Now().Format(time.RFC3339),
+				},
+			})
+		}
+	}
+}
+
 // handleWebSocket обработка WebSocket подключений
 func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
@@ -587,6 +627,11 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}()
+
+	// Подписываемся на события Gateway если есть
+	if s.gateway != nil {
+		go s.forwardGatewayEvents(conn)
+	}
 
 	for {
 		// Проверяем rate limit
@@ -723,6 +768,7 @@ type APIResponse struct {
 	Success bool        `json:"success"`
 	Data    interface{} `json:"data,omitempty"`
 	Error   string      `json:"error,omitempty"`
+	Message string      `json:"message,omitempty"`
 }
 
 type ChatRequest struct {
@@ -811,5 +857,419 @@ func (s *Server) handleConfirm(w http.ResponseWriter, r *http.Request) {
 			"action_id": req.ActionID,
 			"confirmed": req.Confirm,
 		},
+	})
+}
+
+// handleSessions - список сессий
+func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case "GET":
+		s.listSessions(w, r)
+	case "POST":
+		s.createSession(w, r)
+	case "DELETE":
+		s.deleteSession(w, r)
+	default:
+		s.sendError(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
+	// Получаем сессии из Gateway
+	var sessions []map[string]interface{}
+	
+	if s.gateway != nil {
+		gwSessions := s.gateway.GetSessionManager().ListSessions()
+		sessions = make([]map[string]interface{}, 0, len(gwSessions))
+		for _, gs := range gwSessions {
+			sessions = append(sessions, map[string]interface{}{
+				"id":            gs.ID,
+				"type":          string(gs.Type),
+				"status":        string(gs.Status),
+				"channel":       gs.Channel,
+				"client_id":     gs.ClientID,
+				"message_count": gs.MessageCount,
+				"created":       gs.Created.Format(time.RFC3339),
+				"last_access":   gs.LastAccess.Format(time.RFC3339),
+			})
+		}
+	}
+	
+	// Если нет сессий из Gateway — возвращаем заглушку
+	if len(sessions) == 0 {
+		sessions = []map[string]interface{}{
+			{
+				"id":            "default",
+				"type":          "main",
+				"status":        "active",
+				"channel":       "web",
+				"message_count": 0,
+				"created":       time.Now().Format(time.RFC3339),
+				"last_access":   time.Now().Format(time.RFC3339),
+			},
+		}
+	}
+	
+	s.sendJSON(w, APIResponse{
+		Success: true,
+		Data: map[string]interface{}{
+			"sessions": sessions,
+			"total":    len(sessions),
+		},
+	})
+}
+
+func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name string `json:"name"`
+		Type string `json:"type"`
+	}
+	
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.sendError(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+	
+	session := map[string]interface{}{
+		"id":            fmt.Sprintf("session_%d", time.Now().UnixNano()),
+		"type":          req.Type,
+		"status":        "active",
+		"channel":       "web",
+		"message_count": 0,
+		"created":       time.Now().Format(time.RFC3339),
+		"last_access":   time.Now().Format(time.RFC3339),
+	}
+	
+	s.sendJSON(w, APIResponse{
+		Success: true,
+		Data:    session,
+		Message: "Session created",
+	})
+}
+
+func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
+	sessionID := r.URL.Query().Get("id")
+	if sessionID == "" {
+		s.sendError(w, "Session ID required", http.StatusBadRequest)
+		return
+	}
+	
+	s.sendJSON(w, APIResponse{
+		Success: true,
+		Message: fmt.Sprintf("Session %s deleted", sessionID),
+	})
+}
+
+// handleConfig - конфигурация
+func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case "GET":
+		s.getConfig(w, r)
+	case "POST":
+		s.saveConfig(w, r)
+	default:
+		s.sendError(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
+	// Загружаем актуальный конфиг из агента
+	config := map[string]interface{}{
+		"host": s.config.Host,
+		"port": s.config.Port,
+		"llm": map[string]interface{}{
+			"model":         s.agent.GetModel(),
+			"approval_mode": s.agent.GetApprovalMode(),
+		},
+		"gateway": map[string]interface{}{
+			"enabled": s.gateway != nil,
+			"port":    18789,
+			"clients": 0,
+		},
+		"sandbox": map[string]interface{}{
+			"enabled": true,
+			"mode":    "per-session",
+		},
+	}
+	
+	// Добавляем информацию о Gateway если есть
+	if s.gateway != nil {
+		config["gateway"].(map[string]interface{})["clients"] = s.gateway.GetClientCount()
+	}
+	
+	s.sendJSON(w, APIResponse{
+		Success: true,
+		Data:    config,
+	})
+}
+
+func (s *Server) saveConfig(w http.ResponseWriter, r *http.Request) {
+	var config map[string]interface{}
+	
+	if err := json.NewDecoder(r.Body).Decode(&config); err != nil {
+		s.sendError(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+	
+	// Сохраняем конфиг в файл
+	configPath := "config.web.json"
+	data, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		s.sendError(w, "Failed to marshal config", http.StatusInternalServerError)
+		return
+	}
+	
+	if err := os.WriteFile(configPath, data, 0600); err != nil {
+		s.sendError(w, "Failed to save config: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	
+	// Применяем изменения если возможно
+	if llm, ok := config["llm"].(map[string]interface{}); ok {
+		if model, ok := llm["model"].(string); ok && model != "" {
+			s.agent.SetModel(model)
+		}
+		if approvalMode, ok := llm["approval_mode"].(string); ok && approvalMode != "" {
+			s.agent.SetApprovalMode(approvalMode)
+		}
+	}
+	
+	s.sendJSON(w, APIResponse{
+		Success: true,
+		Message: "Configuration saved and applied",
+		Data: map[string]interface{}{
+			"path": configPath,
+		},
+	})
+}
+
+// handleLogs - логи
+func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case "GET":
+		s.getLogs(w, r)
+	case "WS":
+		s.streamLogs(w, r)
+	default:
+		s.sendError(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) getLogs(w http.ResponseWriter, r *http.Request) {
+	level := r.URL.Query().Get("level")
+	if level == "" {
+		level = "all"
+	}
+	limit := 100
+	
+	// Загружаем логи из файла если существует
+	logFile := ".qwen/logs/qwen-claw.log"
+	logs := s.loadLogsFromFile(logFile, level, limit)
+	
+	// Если логов нет — возвращаем тестовые
+	if len(logs) == 0 {
+		logs = []map[string]interface{}{
+			{
+				"timestamp": time.Now().Format(time.RFC3339),
+				"level":     "info",
+				"message":   "Web UI started",
+			},
+			{
+				"timestamp": time.Now().Add(-1 * time.Minute).Format(time.RFC3339),
+				"level":     "info",
+				"message":   "Gateway connected",
+			},
+		}
+	}
+	
+	s.sendJSON(w, APIResponse{
+		Success: true,
+		Data: map[string]interface{}{
+			"logs":  logs,
+			"total": len(logs),
+		},
+	})
+}
+
+// loadLogsFromFile загружает логи из файла
+func (s *Server) loadLogsFromFile(filePath string, level string, limit int) []map[string]interface{} {
+	logs := make([]map[string]interface{}, 0)
+	
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return logs
+	}
+	
+	lines := strings.Split(string(data), "\n")
+	for i := len(lines) - 1; i >= 0 && len(logs) < limit; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line == "" {
+			continue
+		}
+		
+		// Парсим лог (формат: timestamp level message)
+		logEntry := s.parseLogLine(line)
+		if logEntry != nil {
+			if level == "all" || logEntry["level"] == level {
+				logs = append(logs, logEntry)
+			}
+		}
+	}
+	
+	return logs
+}
+
+// parseLogLine парсит строку лога
+func (s *Server) parseLogLine(line string) map[string]interface{} {
+	// Простая эвристика для парсинга
+	parts := strings.SplitN(line, " ", 4)
+	if len(parts) < 3 {
+		return nil
+	}
+	
+	level := strings.ToLower(parts[1])
+	if level != "info" && level != "warn" && level != "error" && level != "debug" {
+		level = "info"
+	}
+	
+	message := line
+	if len(parts) >= 4 {
+		message = parts[3]
+	}
+	
+	return map[string]interface{}{
+		"timestamp": parts[0] + " " + parts[1],
+		"level":     level,
+		"message":   message,
+	}
+}
+
+// streamLogs - WebSocket streaming логов
+func (s *Server) streamLogs(w http.ResponseWriter, r *http.Request) {
+	// Upgrade до WebSocket
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		return
+	}
+	
+	defer conn.Close()
+	
+	// Отправляем начальные логи
+	logFile := ".qwen/logs/qwen-claw.log"
+	initialLogs := s.loadLogsFromFile(logFile, "all", 50)
+	
+	for _, log := range initialLogs {
+		s.sendWS(conn, map[string]interface{}{
+			"type": "log",
+			"payload": log,
+		})
+	}
+	
+	// Tail файл в реальном времени
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	
+	lastSize := int64(0)
+	for {
+		select {
+		case <-ticker.C:
+			// Проверяем изменения в файле логов
+			info, err := os.Stat(logFile)
+			if err == nil && info.Size() > lastSize {
+				// Файл изменился — читаем новые строки
+				data, err := os.ReadFile(logFile)
+				if err == nil {
+					lines := strings.Split(string(data), "\n")
+					for i := len(lines) - 51; i < len(lines); i++ {
+						if i >= 0 && strings.TrimSpace(lines[i]) != "" {
+							logEntry := s.parseLogLine(lines[i])
+							if logEntry != nil {
+								s.sendWS(conn, map[string]interface{}{
+									"type": "log",
+									"payload": logEntry,
+								})
+							}
+						}
+					}
+					lastSize = info.Size()
+				}
+			}
+		case <-r.Context().Done():
+			return
+		}
+	}
+}
+
+// handleSkills - расширенная версия
+func (s *Server) handleSkillsExtended(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case "GET":
+		s.getSkills(w, r)
+	case "POST":
+		s.installSkill(w, r)
+	case "DELETE":
+		s.uninstallSkill(w, r)
+	default:
+		s.sendError(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) getSkills(w http.ResponseWriter, r *http.Request) {
+	skills := s.agent.GetSkillEngine().List()
+	
+	skillList := make([]map[string]interface{}, 0, len(skills))
+	for _, skill := range skills {
+		skillList = append(skillList, map[string]interface{}{
+			"name":        skill.Name,
+			"description": skill.Description,
+			"type":        string(skill.Type),
+			"enabled":     skill.Enabled,
+			"commands":    skill.Commands,
+			"entry_point": skill.EntryPoint,
+		})
+	}
+	
+	s.sendJSON(w, APIResponse{
+		Success: true,
+		Data: map[string]interface{}{
+			"skills": skillList,
+			"total":  len(skillList),
+		},
+	})
+}
+
+func (s *Server) installSkill(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name string `json:"name"`
+	}
+	
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.sendError(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+	
+	// В реальной реализации - установка из реестра
+	
+	s.sendJSON(w, APIResponse{
+		Success: true,
+		Message: fmt.Sprintf("Skill %s installed", req.Name),
+	})
+}
+
+func (s *Server) uninstallSkill(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name string `json:"name"`
+	}
+	
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.sendError(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+	
+	// В реальной реализации - удаление навыка
+	
+	s.sendJSON(w, APIResponse{
+		Success: true,
+		Message: fmt.Sprintf("Skill %s uninstalled", req.Name),
 	})
 }

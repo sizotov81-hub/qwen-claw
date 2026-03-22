@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Qwen-Claw Web Control UI</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div class="app">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="logo">
+                <h1>🦞 Qwen-Claw</h1>
+                <p>Web Control UI</p>
+            </div>
+            
+            <nav class="nav">
+                <a href="#chat" class="nav-item active" data-tab="chat">
+                    <span class="icon">💬</span>
+                    <span>Чат</span>
+                </a>
+                <a href="#sessions" class="nav-item" data-tab="sessions">
+                    <span class="icon">📋</span>
+                    <span>Сессии</span>
+                </a>
+                <a href="#skills" class="nav-item" data-tab="skills">
+                    <span class="icon">🧩</span>
+                    <span>Навыки</span>
+                </a>
+                <a href="#config" class="nav-item" data-tab="config">
+                    <span class="icon">⚙️</span>
+                    <span>Конфиг</span>
+                </a>
+                <a href="#logs" class="nav-item" data-tab="logs">
+                    <span class="icon">📜</span>
+                    <span>Логи</span>
+                </a>
+            </nav>
+            
+            <div class="sidebar-footer">
+                <div class="status">
+                    <span class="status-indicator online"></span>
+                    <span id="gateway-status">Gateway: подключено</span>
+                </div>
+                <div class="info">
+                    <small>v1.0.0</small>
+                </div>
+            </div>
+        </aside>
+        
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Chat Tab -->
+            <div class="tab-content active" id="chat-tab">
+                <div class="chat-container">
+                    <div class="chat-header">
+                        <h2>💬 Чат с AI</h2>
+                        <div class="chat-controls">
+                            <select id="model-select">
+                                <option value="gpt-4">GPT-4</option>
+                                <option value="claude-sonnet">Claude Sonnet</option>
+                                <option value="gpt-3.5">GPT-3.5</option>
+                            </select>
+                            <button id="clear-chat" class="btn btn-secondary">🗑️ Очистить</button>
+                        </div>
+                    </div>
+                    
+                    <div class="chat-messages" id="chat-messages">
+                        <div class="message assistant">
+                            <div class="message-content">
+                                <p>👋 Привет! Я Джарвис, ваш AI-помощник. Чем могу помочь?</p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="chat-input-container">
+                        <textarea 
+                            id="chat-input" 
+                            placeholder="Введите сообщение..." 
+                            rows="3"
+                            autofocus
+                        ></textarea>
+                        <button id="send-btn" class="btn btn-primary">
+                            <span>Отправить</span>
+                            <span class="spinner hide"></span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Sessions Tab -->
+            <div class="tab-content" id="sessions-tab">
+                <div class="sessions-container">
+                    <div class="page-header">
+                        <h2>📋 Сессии</h2>
+                        <button id="new-session-btn" class="btn btn-primary">+ Новая сессия</button>
+                    </div>
+                    
+                    <div class="sessions-grid" id="sessions-grid">
+                        <!-- Сессии будут загружены динамически -->
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Skills Tab -->
+            <div class="tab-content" id="skills-tab">
+                <div class="skills-container">
+                    <div class="page-header">
+                        <h2>🧩 Навыки</h2>
+                        <div class="skills-actions">
+                            <input type="text" id="skills-search" placeholder="Поиск навыков..." class="search-input">
+                            <button id="refresh-skills" class="btn btn-secondary">🔄 Обновить</button>
+                        </div>
+                    </div>
+                    
+                    <div class="skills-grid" id="skills-grid">
+                        <!-- Навыки будут загружены динамически -->
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Config Tab -->
+            <div class="tab-content" id="config-tab">
+                <div class="config-container">
+                    <div class="page-header">
+                        <h2>⚙️ Конфигурация</h2>
+                        <button id="save-config" class="btn btn-primary">💾 Сохранить</button>
+                    </div>
+                    
+                    <div class="config-editor">
+                        <textarea id="config-json" spellcheck="false"></textarea>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Logs Tab -->
+            <div class="tab-content" id="logs-tab">
+                <div class="logs-container">
+                    <div class="page-header">
+                        <h2>📜 Логи</h2>
+                        <div class="logs-controls">
+                            <select id="log-level">
+                                <option value="all">Все уровни</option>
+                                <option value="info">Info</option>
+                                <option value="warn">Warn</option>
+                                <option value="error">Error</option>
+                            </select>
+                            <button id="clear-logs" class="btn btn-secondary">🗑️ Очистить</button>
+                            <button id="download-logs" class="btn btn-secondary">📥 Скачать</button>
+                        </div>
+                    </div>
+                    
+                    <div class="logs-stream" id="logs-stream">
+                        <!-- Логи будут streamed динамически -->
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+    
+    <!-- Modal for session details -->
+    <div id="session-modal" class="modal hide">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="modal-title">Детали сессии</h3>
+                <button class="modal-close" onclick="closeModal()">&times;</button>
+            </div>
+            <div class="modal-body" id="modal-body">
+                <!-- Содержимое загружается динамически -->
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal()">Закрыть</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Toast notifications -->
+    <div id="toast-container" class="toast-container"></div>
+    
+    <script src="/static/js/app.js"></script>
+</body>
+</html>
