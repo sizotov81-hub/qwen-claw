@@ -150,6 +150,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/health", s.handleHealth)
 	mux.HandleFunc("/api/auth", s.handleAuth)
 	mux.HandleFunc("/api/chat", s.authMiddleware(s.handleChat))
+	mux.HandleFunc("/api/chat/stream", s.authMiddleware(s.handleChatStream))
 	mux.HandleFunc("/api/memory", s.authMiddleware(s.handleMemory))
 	mux.HandleFunc("/api/tasks", s.authMiddleware(s.handleTasks))
 	mux.HandleFunc("/api/skills", s.authMiddleware(s.handleSkills))
@@ -381,6 +382,69 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 			Timestamp: time.Now().Format(time.RFC3339),
 		},
 	})
+}
+
+// handleChatStream streaming ответов через SSE
+func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		s.sendError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req ChatRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.sendError(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.Message == "" {
+		s.sendError(w, "Message is required", http.StatusBadRequest)
+		return
+	}
+
+	// Настраиваем SSE
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		s.sendError(w, "Streaming not supported", http.StatusInternalServerError)
+		return
+	}
+
+	// Отправляем событие начала
+	fmt.Fprintf(w, "event: start\ndata: {\"status\": \"thinking\"}\n\n")
+	flusher.Flush()
+
+	// Выполняем запрос
+	ctx := context.Background()
+	response, err := s.agent.Run(ctx, req.Message)
+
+	if err != nil {
+		fmt.Fprintf(w, "event: error\ndata: {\"error\": \"%s\"}\n\n", err.Error())
+		flusher.Flush()
+		return
+	}
+
+	// Отправляем ответ по символам (эффект печати)
+	for _, ch := range response {
+		fmt.Fprintf(w, "event: token\ndata: {\"token\": \"%c\"}\n\n", ch)
+		flusher.Flush()
+		time.Sleep(10 * time.Millisecond) // Скорость печати
+	}
+
+	// Отправляем событие завершения
+	fmt.Fprintf(w, "event: complete\ndata: {\"response\": \"%s\"}\n\n", response)
+	flusher.Flush()
+
+	// Проверяем ожидающие действия
+	actions := s.agent.GetPendingActions()
+	if len(actions) > 0 {
+		fmt.Fprintf(w, "event: confirmation\ndata: {\"actions\": %d}\n\n", len(actions))
+		flusher.Flush()
+	}
 }
 
 // handleMemory управление памятью

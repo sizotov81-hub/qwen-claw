@@ -70,6 +70,10 @@ COPY .env.example /app/.env.example
 RUN mkdir -p /app/.qwen/memory /app/.qwen/scheduler && \
     chown -R qwenclaw:qwenclaw /app
 
+# Копируем health check скрипт
+COPY --chown=qwenclaw:qwenclaw healthcheck.sh /app/healthcheck.sh
+RUN chmod +x /app/healthcheck.sh
+
 # Переключаемся на пользователя без root
 USER qwenclaw
 
@@ -82,9 +86,9 @@ ENV QWEN_CLAW_QWEN_DIR=/app/.qwen
 ENV QWEN_CLAW_MEMORY_DIR=/app/.qwen/memory
 ENV TZ=UTC
 
-# Health check
+# Health check через HTTP endpoint
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD /app/qwen-claw doctor || exit 1
+    CMD /app/healthcheck.sh
 
 # Запуск приложения
 ENTRYPOINT ["/app/qwen-claw"]
