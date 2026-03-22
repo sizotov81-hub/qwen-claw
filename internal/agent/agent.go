@@ -12,6 +12,7 @@ import (
 
 	"github.com/user/qwen-claw/internal/logger"
 	"github.com/user/qwen-claw/internal/memory"
+	"github.com/user/qwen-claw/internal/scheduler"
 	"github.com/user/qwen-claw/internal/skills"
 )
 
@@ -53,6 +54,26 @@ type Agent struct {
 	// antiDegradation система антидеградации
 	antiDegradation *AntiDegradationSystem
 
+	// executor интерфейс для выполнения команд
+	executor Executor
+
+	// scheduler планировщик задач
+	scheduler interface {
+		AddTask(name, description, command, schedule string) (*scheduler.Task, error)
+		RemoveTask(id string) error
+		EnableTask(id string) error
+		DisableTask(id string) error
+		RunTaskNow(id string) (*scheduler.TaskResult, error)
+		GetTask(id string) (*scheduler.Task, error)
+		GetTasks() []*scheduler.Task
+	}
+
+	// confirmationManager менеджер подтверждений
+	confirmationManager *ConfirmationManager
+
+	// intentDetector детектор намерений
+	intentDetector *IntentDetector
+
 	// conversationHistory история разговора
 	conversationHistory []string
 }
@@ -81,14 +102,38 @@ func NewAgent(
 	// Создаём систему антидеградации
 	antiDegradation := NewAntiDegradationSystem(filepath.Join(os.Getenv("HOME"), "qwen-claw", ".qwen", "anti-degradation"))
 
+	// Создаём Executor для выполнения команд
+	executor := NewQwenExecutor(QwenExecutorConfig{
+		QwenPath:     config.QwenPath,
+		Model:        config.Model,
+		ApprovalMode: config.ApprovalMode,
+		Debug:        config.Debug,
+		Timeout:      config.Timeout,
+	})
+
+	// Создаём менеджер подтверждений
+	confirmationManager := NewConfirmationManager(DefaultConfirmationManagerConfig())
+
+	// Создаём детектор намерений
+	intentDetector := NewIntentDetector()
+
 	return &Agent{
 		config:              config,
 		memoryManager:       memoryManager,
 		skillEngine:         skillEngine,
 		systemPrompt:        systemPrompt,
 		antiDegradation:     antiDegradation,
+		executor:            executor,
+		scheduler:           nil, // будет установлен позже через SetScheduler
+		confirmationManager: confirmationManager,
+		intentDetector:      intentDetector,
 		conversationHistory: make([]string, 0),
 	}
+}
+
+// SetScheduler устанавливает планировщик для агента
+func (a *Agent) SetScheduler(sched *scheduler.Scheduler) {
+	a.scheduler = sched
 }
 
 // loadSystemPrompt загружает системный промпт из файла
@@ -274,26 +319,49 @@ func (a *Agent) prependSystemPrompt(query string) string {
 // buildCommandArgs строит аргументы командной строки для qwen cli
 func (a *Agent) buildCommandArgs(query string) []string {
 	args := []string{}
-	
+
 	// Добавляем модель если указана
 	if a.config.Model != "" {
 		args = append(args, "-m", a.config.Model)
 	}
-	
+
 	// Добавляем режим подтверждения
 	if a.config.ApprovalMode != "" {
 		args = append(args, "--approval-mode", a.config.ApprovalMode)
 	}
-	
+
 	// Добавляем debug режим если включён
 	if a.config.Debug {
 		args = append(args, "--debug")
 	}
-	
+
+	// Добавляем историю диалога для контекста (последние 10 сообщений)
+	if len(a.conversationHistory) > 0 {
+		history := a.getRecentHistory(10)
+		if history != "" {
+			args = append(args, "--context", history)
+		}
+	}
+
 	// Добавляем запрос как позиционный аргумент
 	args = append(args, query)
-	
+
 	return args
+}
+
+// getRecentHistory возвращает последние N сообщений истории
+func (a *Agent) getRecentHistory(n int) string {
+	if len(a.conversationHistory) == 0 {
+		return ""
+	}
+
+	start := len(a.conversationHistory) - n
+	if start < 0 {
+		start = 0
+	}
+
+	recent := a.conversationHistory[start:]
+	return strings.Join(recent, "\n")
 }
 
 // executeQwen выполняет qwen cli команду
@@ -417,44 +485,54 @@ func (a *Agent) GetQwenPath() string {
 func (a *Agent) containsSensitiveData(query string) bool {
 	query = strings.ToLower(query)
 
-	// Ключевые слова для блокировки запросов о чувствительных данных
-	sensitivePatterns := []string{
-		// Токены и ключи
-		"telegram token",
-		"bot token",
-		"api token",
-		"api key",
-		"токен бота",
-		"токен телеграм",
-		"ключ api",
-
-		// ID пользователей
-		"allowed user",
-		"allowed id",
-		"user id",
-		"telegram id",
-		"разрешённы пользователь",
-		"id пользователя",
-		"айди пользователя",
-
-		// Переменные окружения
-		"qwen_claw_telegram",
-		"qwen_claw_token",
-		"qwen_claw_allowed",
-		".env",
-		"env variable",
-		"переменная окружения",
-
-		// Пароли и секреты
-		"password",
-		"secret",
-		"пароль",
-		"секрет",
-		"приватн",
-		"private key",
+	// Блокируем ТОЛЬКО запросы на раскрытие/получение чувствительных данных
+	// Не блокируем упоминания в контексте правил, документации и т.д.
+	
+	// Паттерны запросов на раскрытие
+	revealPatterns := []string{
+		// Прямые запросы токенов/ключей
+		"покажи токен",
+		"покажи ключ",
+		"дай токен",
+		"дай ключ",
+		"раскрой токен",
+		"get token",
+		"show token",
+		"reveal token",
+		"what is the token",
+		"what is my token",
+		
+		// Запросы ID пользователей
+		"покажи allowed",
+		"покажи id пользователя",
+		"какой мой id",
+		"какой id у",
+		"who has access",
+		"show allowed users",
+		"show user id",
+		
+		// Запросы секретов/паролей
+		"покажи секрет",
+		"покажи пароль",
+		"дай секрет",
+		"дай пароль",
+		"show secret",
+		"show password",
+		"what is the secret",
+		"what is the password",
+		
+		// Запросы .env содержимого
+		"покажи .env",
+		"покажи env",
+		"содержимое .env",
+		"содержимое env",
+		"show .env",
+		"show env file",
+		"read .env",
+		"cat .env",
 	}
 
-	for _, pattern := range sensitivePatterns {
+	for _, pattern := range revealPatterns {
 		if strings.Contains(query, pattern) {
 			return true
 		}
@@ -544,4 +622,219 @@ func (a *Agent) RecordTaskMetric(query string, duration time.Duration, attempts 
 	if a.antiDegradation != nil {
 		a.antiDegradation.RecordTask(query, duration, attempts, errors, success)
 	}
+}
+
+// GetExecutor возвращает executor
+func (a *Agent) GetExecutor() Executor {
+	return a.executor
+}
+
+// SetExecutor устанавливает executor
+func (a *Agent) SetExecutor(executor Executor) {
+	a.executor = executor
+}
+
+// ExecuteCommand выполняет команду через executor
+func (a *Agent) ExecuteCommand(ctx context.Context, command string, args []string) (string, error) {
+	return a.executor.Execute(ctx, command, args)
+}
+
+// SetApprovalMode устанавливает режим подтверждения
+func (a *Agent) SetApprovalMode(mode string) {
+	if qwenExec, ok := a.executor.(*QwenExecutor); ok {
+		qwenExec.SetApprovalMode(mode)
+	}
+}
+
+// GetApprovalMode возвращает текущий режим подтверждения
+func (a *Agent) GetApprovalMode() string {
+	if qwenExec, ok := a.executor.(*QwenExecutor); ok {
+		return qwenExec.GetApprovalMode()
+	}
+	return "auto-edit"
+}
+
+// ScheduleTask создаёт задачу в планировщике
+func (a *Agent) ScheduleTask(name, description, command, schedule string) (*scheduler.Task, error) {
+	if a.scheduler == nil {
+		return nil, fmt.Errorf("scheduler not initialized")
+	}
+	return a.scheduler.AddTask(name, description, command, schedule)
+}
+
+// RemoveTask удаляет задачу из планировщика
+func (a *Agent) RemoveTask(taskID string) error {
+	if a.scheduler == nil {
+		return fmt.Errorf("scheduler not initialized")
+	}
+	return a.scheduler.RemoveTask(taskID)
+}
+
+// EnableTask включает задачу
+func (a *Agent) EnableTask(taskID string) error {
+	if a.scheduler == nil {
+		return fmt.Errorf("scheduler not initialized")
+	}
+	return a.scheduler.EnableTask(taskID)
+}
+
+// DisableTask отключает задачу
+func (a *Agent) DisableTask(taskID string) error {
+	if a.scheduler == nil {
+		return fmt.Errorf("scheduler not initialized")
+	}
+	return a.scheduler.DisableTask(taskID)
+}
+
+// RunTaskNow выполняет задачу немедленно
+func (a *Agent) RunTaskNow(taskID string) (*scheduler.TaskResult, error) {
+	if a.scheduler == nil {
+		return nil, fmt.Errorf("scheduler not initialized")
+	}
+	return a.scheduler.RunTaskNow(taskID)
+}
+
+// GetTask возвращает задачу по ID
+func (a *Agent) GetTask(taskID string) (*scheduler.Task, error) {
+	if a.scheduler == nil {
+		return nil, fmt.Errorf("scheduler not initialized")
+	}
+	return a.scheduler.GetTask(taskID)
+}
+
+// GetTasks возвращает все задачи
+func (a *Agent) GetTasks() []*scheduler.Task {
+	if a.scheduler == nil {
+		return nil
+	}
+	return a.scheduler.GetTasks()
+}
+
+// GetScheduler возвращает планировщик
+func (a *Agent) GetScheduler() *scheduler.Scheduler {
+	if s, ok := a.scheduler.(*scheduler.Scheduler); ok {
+		return s
+	}
+	return nil
+}
+
+// GetConfirmationManager возвращает менеджер подтверждений
+func (a *Agent) GetConfirmationManager() *ConfirmationManager {
+	return a.confirmationManager
+}
+
+// GetIntentDetector возвращает детектор намерений
+func (a *Agent) GetIntentDetector() *IntentDetector {
+	return a.intentDetector
+}
+
+// ProcessIntent обрабатывает намерение с подтверждением
+func (a *Agent) ProcessIntent(ctx context.Context, query string) (string, error) {
+	// Распознаём намерение
+	intent := a.intentDetector.Detect(query)
+
+	// Проверяем, требуется ли подтверждение
+	if a.confirmationManager.RequiresConfirmation(intent) {
+		// Создаём ожидающее действие
+		action := a.confirmationManager.CreatePending(intent, query)
+
+		// Возвращаем запрос подтверждения
+		return fmt.Sprintf("⚠️ Требуется подтверждение для: %s\n\nДействие: %s\nЗапрос: %s\n\nНапишите: ПОДТВЕРЖДАЮ %s",
+			a.intentDetector.GetIntentDescription(intent),
+			intent.Type,
+			query,
+			action.ID), nil
+	}
+
+	// Выполняем без подтверждения
+	return a.executeIntent(ctx, intent)
+}
+
+// executeIntent выполняет намерение
+func (a *Agent) executeIntent(ctx context.Context, intent *Intent) (string, error) {
+	switch intent.Type {
+	case IntentMemoryAdd:
+		// Запомнить в память
+		_, err := a.memoryManager.Remember("fact", intent.Data, nil)
+		if err != nil {
+			return "", err
+		}
+		return "✅ Запомнил: " + intent.Data, nil
+
+	case IntentMemorySearch:
+		// Поиск в памяти
+		result := a.memoryManager.Find(intent.Data, nil)
+		if result.Found {
+			return "📚 Найдено в памяти:\n" + a.formatMemoryContext(result), nil
+		}
+		return "Ничего не найдено в памяти", nil
+
+	case IntentTaskSchedule:
+		// Запланировать задачу
+		if a.scheduler == nil {
+			return "", fmt.Errorf("scheduler not initialized")
+		}
+		// Парсим команду из данных (формат: "задачу name на schedule с командой cmd")
+		task, err := a.scheduler.AddTask("task_"+generateActionID(), intent.Data, intent.Data, "@daily")
+		if err != nil {
+			return "", err
+		}
+		return "✅ Задача запланирована: " + task.ID, nil
+
+	case IntentShellExec:
+		// Выполнить команду через executor
+		output, err := a.executor.Execute(ctx, intent.Data, nil)
+		if err != nil {
+			return "", err
+		}
+		return "✅ Выполнено:\n" + output, nil
+
+	default:
+		// Для остальных намерений используем Qwen CLI
+		return a.Run(ctx, intent.Data)
+	}
+}
+
+// ConfirmAction подтверждает действие по ID
+func (a *Agent) ConfirmAction(actionID string) (string, error) {
+	if !a.confirmationManager.Confirm(actionID) {
+		return "", fmt.Errorf("failed to confirm action: %s", actionID)
+	}
+
+	action := a.confirmationManager.GetPending(actionID)
+	if action == nil {
+		return "", fmt.Errorf("action not found: %s", actionID)
+	}
+
+	// Выполняем действие
+	ctx := context.Background()
+	result, err := a.executeIntent(ctx, action.Intent)
+	if err != nil {
+		return "", err
+	}
+
+	return "✅ Действие выполнено:\n" + result, nil
+}
+
+// RejectAction отклоняет действие по ID
+func (a *Agent) RejectAction(actionID string) error {
+	if !a.confirmationManager.Reject(actionID) {
+		return fmt.Errorf("failed to reject action: %s", actionID)
+	}
+	return nil
+}
+
+// GetPendingActions возвращает все ожидающие действия
+func (a *Agent) GetPendingActions() []*PendingAction {
+	return a.confirmationManager.GetPendingActions()
+}
+
+// SetConfirmationMode устанавливает режим подтверждений
+func (a *Agent) SetConfirmationMode(mode ConfirmationMode) {
+	a.confirmationManager.SetMode(mode)
+}
+
+// GetConfirmationMode возвращает текущий режим подтверждений
+func (a *Agent) GetConfirmationMode() ConfirmationMode {
+	return a.confirmationManager.GetMode()
 }

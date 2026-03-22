@@ -13,6 +13,7 @@ import (
 	"github.com/user/qwen-claw/internal/agent"
 	"github.com/user/qwen-claw/internal/config"
 	"github.com/user/qwen-claw/internal/logger"
+	"github.com/user/qwen-claw/internal/markdown"
 	"github.com/user/qwen-claw/internal/memory"
 	"github.com/user/qwen-claw/internal/scheduler"
 	"github.com/user/qwen-claw/internal/skills"
@@ -254,6 +255,12 @@ func runMain(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to init memory: %w", err)
 	}
 
+	// Создаём планировщик с заглушкой executor (будет заменён позже)
+	sched := scheduler.NewScheduler(filepath.Join(cfg.QwenDir, "scheduler"), nil)
+	if err := sched.Init(); err != nil {
+		return fmt.Errorf("failed to init scheduler: %w", err)
+	}
+
 	// Создаём агента
 	agentInstance := agent.NewAgent(
 		agent.AgentConfig{
@@ -265,6 +272,13 @@ func runMain(cmd *cobra.Command, args []string) error {
 		},
 		memoryManager,
 	)
+
+	// Устанавливаем планировщик в агент
+	agentInstance.SetScheduler(sched)
+
+	// Настраиваем executor для планировщика
+	taskExec := agent.NewAgentExecutor(agentInstance)
+	sched.SetExecutor(taskExec)
 
 	// Проверяем доступность qwen cli
 	if !agentInstance.CheckQwenAvailable() {
@@ -284,7 +298,9 @@ func runMain(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("agent failed: %w", err)
 	}
 
-	fmt.Println(response)
+	// Форматируем ответ с markdown для CLI
+	formatted := markdown.RenderToCLI(response)
+	fmt.Println(formatted)
 	return nil
 }
 
@@ -331,7 +347,9 @@ func runQuery(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("agent failed: %w", err)
 	}
 
-	fmt.Println(response)
+	// Форматируем ответ с markdown для CLI
+	formatted := markdown.RenderToCLI(response)
+	fmt.Println(formatted)
 	return nil
 }
 
@@ -443,7 +461,9 @@ func runChat(cmd *cobra.Command, args []string) error {
 			continue
 		}
 
-		fmt.Println("\n💬 " + response)
+		// Форматируем ответ с markdown для CLI
+		formatted := markdown.RenderToCLI(response)
+		fmt.Println("\n💬 " + formatted)
 	}
 
 	return scanner.Err()

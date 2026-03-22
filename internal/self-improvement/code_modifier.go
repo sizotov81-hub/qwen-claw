@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/user/qwen-claw/internal/voice"
 )
 
 var (
@@ -181,8 +183,8 @@ func isGitRepo(path string) bool {
 func GenerateChangePlan() *ChangeRequest {
 	description := "Добавить распознавание голосовых сообщений из Telegram"
 	reason := "Пользователь отправляет голосовые сообщения, нужно их распознавать"
-	
-	commands := GetInstallationCommands()
+
+	commands := voice.GetInstallationCommands()
 	
 	files := []FileChange{
 		{

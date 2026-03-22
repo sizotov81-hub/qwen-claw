@@ -130,6 +130,20 @@ func NewScheduler(dataDir string, executor Executor) *Scheduler {
 	}
 }
 
+// SetExecutor устанавливает executor для планировщика
+func (s *Scheduler) SetExecutor(executor Executor) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.executor = executor
+}
+
+// GetExecutor возвращает executor планировщика
+func (s *Scheduler) GetExecutor() Executor {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.executor
+}
+
 // Init инициализирует планировщик
 func (s *Scheduler) Init() error {
 	// Создаём директорию
@@ -340,13 +354,7 @@ func (s *Scheduler) matchField(field string, value, min, max int) bool {
 		}
 	}
 
-	// Проверяем конкретное значение
-	var val int
-	if _, err := fmt.Sscanf(field, "%d", &val); err == nil {
-		return value == val
-	}
-
-	// Проверяем диапазон (1-5)
+	// Проверяем диапазон (1-5) — ДО проверки конкретного значения
 	if strings.Contains(field, "-") {
 		parts := strings.Split(field, "-")
 		if len(parts) == 2 {
@@ -371,6 +379,12 @@ func (s *Scheduler) matchField(field string, value, min, max int) bool {
 			}
 		}
 		return false
+	}
+
+	// Проверяем конкретное значение
+	var val int
+	if _, err := fmt.Sscanf(field, "%d", &val); err == nil {
+		return value == val
 	}
 
 	return false
@@ -483,6 +497,11 @@ func (s *Scheduler) ListTasks() []*Task {
 	return result
 }
 
+// GetTasks возвращает список всех задач (алиас для ListTasks)
+func (s *Scheduler) GetTasks() []*Task {
+	return s.ListTasks()
+}
+
 // GetResults возвращает результаты выполнения
 func (s *Scheduler) GetResults(limit int) []*TaskResult {
 	s.mu.RLock()
@@ -539,6 +558,14 @@ func (s *Scheduler) RunTaskNow(id string) (*TaskResult, error) {
 	result := &TaskResult{
 		TaskID:  task.ID,
 		Started: time.Now(),
+	}
+
+	// Проверяем, что executor установлен
+	if s.executor == nil {
+		result.Completed = time.Now()
+		result.Success = false
+		result.Error = "executor not initialized"
+		return result, nil
 	}
 
 	ctx := context.Background()

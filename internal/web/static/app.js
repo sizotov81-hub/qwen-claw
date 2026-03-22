@@ -170,12 +170,100 @@ function initWebSocket() {
 }
 
 function handleWSMessage(data) {
-    if (data.type === 'chat_response') {
-        addMessage(data.message, 'user');
-        addMessage(data.response, 'assistant');
+    if (data.type === 'thinking') {
+        // Показываем индикатор "думает"
+        showThinkingIndicator();
+    } else if (data.type === 'chat_response') {
+        // Скрываем индикатор
+        hideThinkingIndicator();
+        
+        // Потоковый вывод с эффектом печати
+        if (data.streaming) {
+            typeWriterEffect(data.message, 'assistant');
+        } else {
+            addMessage(data.message, 'user');
+            addMessage(data.response || data.message, 'assistant');
+        }
+        
+        // Проверяем confirmation в отдельном сообщении
+    } else if (data.type === 'confirmation') {
+        // Показываем кнопки подтверждения
+        showConfirmationButtons(data.actions);
     } else if (data.type === 'error') {
+        hideThinkingIndicator();
         addMessage(data.message, 'error');
     }
+}
+
+function showThinkingIndicator() {
+    const div = document.createElement('div');
+    div.className = 'message assistant thinking';
+    div.id = 'thinking-indicator';
+    div.innerHTML = '🤔 Думаю...<span class="cursor">▌</span>';
+    elements.chatMessages.appendChild(div);
+    elements.chatMessages.scrollTop = elements.chatMessages.scrollHeight;
+}
+
+function hideThinkingIndicator() {
+    const indicator = document.getElementById('thinking-indicator');
+    if (indicator) {
+        indicator.remove();
+    }
+}
+
+function typeWriterEffect(text, type) {
+    const div = document.createElement('div');
+    div.className = `message ${type}`;
+    elements.chatMessages.appendChild(div);
+    
+    // Рендерим markdown
+    div.innerHTML = marked.parse(text);
+    elements.chatMessages.scrollTop = elements.chatMessages.scrollHeight;
+}
+
+function showConfirmationButtons(actions) {
+    const div = document.createElement('div');
+    div.className = 'message confirmation';
+    
+    let html = '<div class="confirmation-box"><strong>⚠️ Требуется подтверждение:</strong><br><br>';
+    actions.forEach(action => {
+        html += `<div class="confirmation-item">
+            <code>${action.id}</code>: ${action.query}
+            <button onclick="confirmAction('${action.id}', true)" class="confirm-btn">✅ Подтвердить</button>
+            <button onclick="confirmAction('${action.id}', false)" class="reject-btn">❌ Отклонить</button>
+        </div>`;
+    });
+    html += '</div>';
+    
+    div.innerHTML = html;
+    elements.chatMessages.appendChild(div);
+    elements.chatMessages.scrollTop = elements.chatMessages.scrollHeight;
+}
+
+function confirmAction(actionId, confirm) {
+    fetch('/api/confirm', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${state.token}`
+        },
+        body: JSON.stringify({
+            action_id: actionId,
+            confirm: confirm
+        })
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.success) {
+            addMessage(data.data.message, 'assistant');
+            // Удаляем кнопки подтверждения
+            const confirmationBoxes = document.querySelectorAll('.confirmation-box');
+            confirmationBoxes.forEach(box => box.remove());
+        } else {
+            addMessage(data.error, 'error');
+        }
+    })
+    .catch(err => addMessage(err.message, 'error'));
 }
 
 // Чат

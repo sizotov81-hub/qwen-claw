@@ -1,7 +1,6 @@
 package logger
 
 import (
-	"os"
 	"sync"
 
 	"go.uber.org/zap"
@@ -18,7 +17,7 @@ func Init(level string) error {
 	var err error
 	once.Do(func() {
 		config := zap.NewProductionConfig()
-		
+
 		// Устанавливаем уровень логирования
 		switch level {
 		case "debug":
@@ -32,7 +31,7 @@ func Init(level string) error {
 		default:
 			config.Level = zap.NewAtomicLevelAt(zapcore.InfoLevel)
 		}
-		
+
 		// Формат вывода
 		config.EncoderConfig.TimeKey = "timestamp"
 		config.EncoderConfig.LevelKey = "level"
@@ -41,8 +40,12 @@ func Init(level string) error {
 		config.EncoderConfig.MessageKey = "msg"
 		config.EncoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
 		config.EncoderConfig.EncodeLevel = zapcore.CapitalColorLevelEncoder
-		
-		log, err = config.Build().Sugar()
+
+		var logger *zap.Logger
+		logger, err = config.Build()
+		if err == nil {
+			log = logger.Sugar()
+		}
 	})
 	return err
 }
@@ -115,6 +118,7 @@ func GetLogger() *zap.SugaredLogger {
 func init() {
 	// Инициализируем дефолтным логгером если Init не вызван
 	once.Do(func() {
-		log, _ = zap.NewProduction().Sugar()
+		logger, _ := zap.NewProduction()
+		log = logger.Sugar()
 	})
 }

@@ -41,5 +41,71 @@
     "success": true,
     "timestamp": "2026-03-22T00:03:43.341120068+03:00",
     "pattern_type": "slow_execution"
+  },
+  {
+    "query": "Привет",
+    "duration": 10534257989,
+    "attempts": 1,
+    "errors": null,
+    "success": true,
+    "timestamp": "2026-03-22T14:01:01.709330669+03:00"
+  },
+  {
+    "query": "прочитай все файлы проекта qwen-claw и проверь на безопасность",
+    "duration": 12879768972,
+    "attempts": 1,
+    "errors": null,
+    "success": true,
+    "timestamp": "2026-03-22T14:03:13.649691189+03:00"
+  },
+  {
+    "query": "ПРДТВЕРЖДАЮ",
+    "duration": 8797406542,
+    "attempts": 1,
+    "errors": null,
+    "success": true,
+    "timestamp": "2026-03-22T14:03:54.539434235+03:00"
+  },
+  {
+    "query": "ПОДТВЕРЖДАЮ",
+    "duration": 159942713502,
+    "attempts": 1,
+    "errors": null,
+    "success": true,
+    "timestamp": "2026-03-22T14:06:47.922300428+03:00",
+    "pattern_type": "slow_execution"
+  },
+  {
+    "query": "добавь в правила",
+    "duration": 6963418479,
+    "attempts": 1,
+    "errors": null,
+    "success": true,
+    "timestamp": "2026-03-22T14:09:34.427751778+03:00"
+  },
+  {
+    "query": "ты тупишь?",
+    "duration": 10075161231,
+    "attempts": 1,
+    "errors": null,
+    "success": true,
+    "timestamp": "2026-03-22T14:47:14.758340057+03:00"
+  },
+  {
+    "query": "ты отвечаешь не  адекватно на запрос:",
+    "duration": 22514398824,
+    "attempts": 1,
+    "errors": null,
+    "success": true,
+    "timestamp": "2026-03-22T14:48:09.866665268+03:00"
+  },
+  {
+    "query": "проанализируй код в папке qwen-claw проверь документацию всё ли описано, проверь закомиченны и запушены ли все изменения",
+    "duration": 72460945304,
+    "attempts": 1,
+    "errors": null,
+    "success": true,
+    "timestamp": "2026-03-22T15:02:35.682537396+03:00",
+    "pattern_type": "slow_execution"
   }
 ]

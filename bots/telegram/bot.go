@@ -15,9 +15,10 @@ import (
 
 	"github.com/user/qwen-claw/internal/agent"
 	"github.com/user/qwen-claw/internal/logger"
+	"github.com/user/qwen-claw/internal/markdown"
 	"github.com/user/qwen-claw/internal/memory"
 	"github.com/user/qwen-claw/internal/scheduler"
-	"github.com/user/qwen-claw/internal/selfimprovement"
+	self_improvement "github.com/user/qwen-claw/internal/self-improvement"
 	"github.com/user/qwen-claw/internal/voice"
 )
 
@@ -51,7 +52,7 @@ type Bot struct {
 	scheduler *scheduler.Scheduler
 	
 	// selfImprovement система самосовершенствования
-	selfImprovement *selfimprovement.Engine
+	selfImprovement *self_improvement.Engine
 	
 	// running флаг работы
 	running bool
@@ -81,7 +82,7 @@ func NewBot(
 	
 	// Создаём систему самосовершенствования
 	projectRoot := os.Getenv("HOME") + "/qwen-claw"
-	selfImprovement := selfimprovement.NewEngine(projectRoot)
+	selfImprovement := self_improvement.NewEngine(projectRoot)
 
 	return &Bot{
 		config:          config,
@@ -254,7 +255,11 @@ func (b *Bot) handleCommand(msg *tgbotapi.Message) {
 			"/clear - Очистить историю\n" +
 			"/model - Текущая модель\n" +
 			"/tasks - Список задач\n" +
-			"/addtask - Добавить задачу\n\n" +
+			"/addtask - Добавить задачу\n" +
+			"/pending - Ожидающие действия\n\n" +
+			"**Подтверждения**:\n" +
+			"• `ПОДТВЕРЖДАЮ <id>` - подтвердить действие\n" +
+			"• `ОТМЕНИТЬ <id>` - отклонить действие\n\n" +
 			"**Примеры запросов**:\n" +
 			"• `Создай файл test.go`\n" +
 			"• `Выполни pwd`\n" +
@@ -402,6 +407,46 @@ func (b *Bot) handleCommand(msg *tgbotapi.Message) {
 		}
 		b.sendMessage(msg.Chat.ID, response)
 
+	case "pending":
+		// Показать ожидающие действия подтверждения
+		actions := b.agent.GetPendingActions()
+		if len(actions) == 0 {
+			b.sendMessage(msg.Chat.ID, "📋 Нет ожидающих действий")
+			return
+		}
+
+		response := "📋 **Ожидающие действия**:\n\n"
+		for _, action := range actions {
+			status := "⏳ Ожидает"
+			if action.Confirmed {
+				status = "✅ Подтверждено"
+			} else if action.Rejected {
+				status = "❌ Отклонено"
+			}
+			response += fmt.Sprintf("• `%s` - %s [%s]\n", action.ID, action.Query, status)
+		}
+		response += "\nИспользуйте `ПОДТВЕРЖДАЮ <id>` или `ОТМЕНИТЬ <id>`"
+
+		// Добавляем inline кнопки для быстрого подтверждения
+		if len(actions) > 0 {
+			var buttons []tgbotapi.InlineKeyboardButton
+			for _, action := range actions {
+				if action.IsPending() {
+					buttons = append(buttons, tgbotapi.NewInlineKeyboardButtonData(
+						fmt.Sprintf("✅ %s", action.ID[len("action_"):len("action_")+8]),
+						fmt.Sprintf("confirm_action:%s", action.ID),
+					))
+				}
+			}
+			if len(buttons) > 0 {
+				keyboard := tgbotapi.NewInlineKeyboardMarkup(buttons)
+				b.sendMessageWithKeyboard(msg.Chat.ID, response, keyboard)
+				return
+			}
+		}
+
+		b.sendMessage(msg.Chat.ID, response)
+
 	default:
 		b.sendMessage(msg.Chat.ID, fmt.Sprintf("❓ Неизвестная команда: /%s\nИспользуй /help", command))
 	}
@@ -412,15 +457,43 @@ func (b *Bot) handleQuery(msg *tgbotapi.Message) {
 	// Показываем индикатор "печатает"
 	b.sendChatAction(msg.Chat.ID, "typing")
 
-	// Отправляем промежуточное сообщение "Думаю..."
-	thinkingMsg := b.sendMessage(msg.Chat.ID, "🤔 **Думаю...**")
-
 	query := msg.Text
+
+	// Проверяем команды подтверждения
+	if strings.HasPrefix(strings.ToUpper(query), "ПОДТВЕРЖДАЮ") || strings.HasPrefix(strings.ToUpper(query), "CONFIRM") {
+		// Извлекаем ID действия
+		parts := strings.Fields(query)
+		if len(parts) >= 2 {
+			actionID := parts[1]
+			response, err := b.agent.ConfirmAction(actionID)
+			if err != nil {
+				b.sendMessage(msg.Chat.ID, fmt.Sprintf("❌ **Ошибка подтверждения**: %v", err))
+				return
+			}
+			b.sendMessage(msg.Chat.ID, response)
+			return
+		}
+	}
+
+	if strings.HasPrefix(strings.ToUpper(query), "ОТМЕНИТЬ") || strings.HasPrefix(strings.ToUpper(query), "CANCEL") || strings.HasPrefix(strings.ToUpper(query), "ОТКЛОНИТЬ") {
+		// Извлекаем ID действия
+		parts := strings.Fields(query)
+		if len(parts) >= 2 {
+			actionID := parts[1]
+			err := b.agent.RejectAction(actionID)
+			if err != nil {
+				b.sendMessage(msg.Chat.ID, fmt.Sprintf("❌ **Ошибка отклонения**: %v", err))
+				return
+			}
+			b.sendMessage(msg.Chat.ID, "✅ Действие отклонено")
+			return
+		}
+	}
 
 	// Сохраняем в память
 	b.memory.AddMessage("user", query)
 
-	// Отправляем запрос в Qwen
+	// Отправляем запрос в Qwen с потоковым выводом
 	ctx := context.Background()
 	if b.config.Timeout > 0 {
 		var cancel context.CancelFunc
@@ -428,41 +501,63 @@ func (b *Bot) handleQuery(msg *tgbotapi.Message) {
 		defer cancel()
 	}
 
-	response, err := b.agent.Run(ctx, query)
+	// Отправляем сообщение "Думаю..." которое будем обновлять
+	thinkingMsg := b.sendMessage(msg.Chat.ID, "🤔 **Думаю...**")
 
-	// Сохраняем ответ в память
-	if err == nil {
-		b.memory.AddMessage("assistant", response)
-	}
+	// Создаём буфер для накопления ответа
+	var responseBuilder strings.Builder
+	updateInterval := 100 * time.Millisecond // Обновляем сообщение каждые 100мс
 
-	// Отправляем ответ
-	if err != nil {
-		b.deleteMessage(msg.Chat.ID, thinkingMsg)
-		b.sendMessage(msg.Chat.ID, fmt.Sprintf("❌ **Ошибка**: %v", err))
-		return
-	}
-
-	// Форматируем ответ (Markdown)
-	response = b.formatResponse(response)
-
-	// Telegram имеет лимит 4096 символов на сообщение
-	if len(response) > 4000 {
-		// Разбиваем на части
-		parts := b.splitMessage(response, 4000)
-		for i, part := range parts {
-			if i == len(parts)-1 {
-				b.sendMessage(msg.Chat.ID, part)
-			} else {
-				b.sendMessage(msg.Chat.ID, part)
-				time.Sleep(100 * time.Millisecond)
-			}
+	// Запускаем выполнение с потоковым выводом
+	done := make(chan error, 1)
+	go func() {
+		response, err := b.agent.Run(ctx, query)
+		if err != nil {
+			done <- err
+			return
 		}
-	} else {
-		b.sendMessage(msg.Chat.ID, response)
-	}
 
-	// Удаляем сообщение "Думаю..."
-	b.deleteMessage(msg.Chat.ID, thinkingMsg)
+		// Сохраняем ответ в память
+		b.memory.AddMessage("assistant", response)
+
+		// Форматируем ответ
+		response = b.formatResponse(response)
+		responseBuilder.WriteString(response)
+		done <- nil
+	}()
+
+	// Потоковое обновление сообщения
+	ticker := time.NewTicker(updateInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			currentText := responseBuilder.String()
+			if currentText != "" {
+				// Обновляем сообщение с эффектом печати
+				b.editMessageWithChat(msg.Chat.ID, thinkingMsg, currentText+" ▌")
+			}
+		case err := <-done:
+			// Финальное обновление
+			finalText := responseBuilder.String()
+			if err != nil {
+				b.editMessageWithChat(msg.Chat.ID, thinkingMsg, fmt.Sprintf("❌ **Ошибка**: %v", err))
+			} else {
+				// Удаляем курсор и отправляем финальное сообщение
+				b.deleteMessage(msg.Chat.ID, thinkingMsg)
+
+				// Добавляем кнопки подтверждения если есть ожидающие действия
+				actions := b.agent.GetPendingActions()
+				if len(actions) > 0 {
+					b.sendConfirmationKeyboard(msg.Chat.ID, finalText, actions)
+				} else {
+					b.sendMessage(msg.Chat.ID, finalText)
+				}
+			}
+			return
+		}
+	}
 }
 
 // handleDocument обрабатывает загруженные документы
@@ -495,19 +590,15 @@ func (b *Bot) handleDocument(msg *tgbotapi.Message) {
 func (b *Bot) handleVoice(msg *tgbotapi.Message) {
 	b.sendChatAction(msg.Chat.ID, "typing")
 
-	voice := msg.Voice
-	
-	// Получаем файл
-	file := tgbotapi.FileConfig{
-		FileID: voice.FileID,
-	}
-	
-	fileURL, err := b.api.GetFileDirectURL(voice.FileID)
+	telegramVoice := msg.Voice
+
+	// Получаем URL файла
+	fileURL, err := b.api.GetFileDirectURL(telegramVoice.FileID)
 	if err != nil {
 		b.sendMessage(msg.Chat.ID, fmt.Sprintf("❌ Ошибка загрузки голосового: %v", err))
 		return
 	}
-	
+
 	// Скачиваем
 	resp, err := http.Get(fileURL)
 	if err != nil {
@@ -515,7 +606,7 @@ func (b *Bot) handleVoice(msg *tgbotapi.Message) {
 		return
 	}
 	defer resp.Body.Close()
-	
+
 	voiceData, err := io.ReadAll(resp.Body)
 	if err != nil {
 		b.sendMessage(msg.Chat.ID, fmt.Sprintf("❌ Ошибка чтения: %v", err))
@@ -524,7 +615,7 @@ func (b *Bot) handleVoice(msg *tgbotapi.Message) {
 	
 	// Пробуем распознать через whisper
 	whisper := voice.NewWhisper()
-	
+
 	if !whisper.IsInstalled() {
 		// Whisper не установлен - предлагаем установить
 		response := "🎤 **Голосовое сообщение получено**\n\n" +
@@ -565,17 +656,6 @@ func (b *Bot) handleVoice(msg *tgbotapi.Message) {
 	})
 }
 
-// IsInstalled проверяет установку whisper
-func (w *Whisper) IsInstalled() bool {
-	if _, err := os.Stat(w.whisperPath); err != nil {
-		return false
-	}
-	if _, err := os.Stat(w.modelPath); err != nil {
-		return false
-	}
-	return true
-}
-
 // sendMessage отправляет сообщение
 func (b *Bot) sendMessage(chatID int64, text string) int {
 	msg := tgbotapi.NewMessage(chatID, text)
@@ -605,20 +685,8 @@ func (b *Bot) sendChatAction(chatID int64, action string) {
 
 // formatResponse форматирует ответ для Telegram
 func (b *Bot) formatResponse(response string) string {
-	// Экранируем специальные символы Markdown
-	response = strings.ReplaceAll(response, "_", "\\_")
-	response = strings.ReplaceAll(response, "*", "\\*")
-	response = strings.ReplaceAll(response, "[", "\\[")
-	response = strings.ReplaceAll(response, "`", "\\`")
-
-	// Заменяем блоки кода на формат Telegram
-	response = strings.ReplaceAll(response, "```go", "```go\n")
-	response = strings.ReplaceAll(response, "```python", "```python\n")
-	response = strings.ReplaceAll(response, "```bash", "```bash\n")
-	response = strings.ReplaceAll(response, "```javascript", "```javascript\n")
-	response = strings.ReplaceAll(response, "```", "```\n")
-
-	return response
+	// Используем markdown рендерер для Telegram
+	return markdown.RenderToTelegram(response)
 }
 
 // splitMessage разбивает длинное сообщение на части
@@ -691,11 +759,94 @@ func (b *Bot) handleCallbackQuery(callback *tgbotapi.CallbackQuery) {
 
 	case "main_menu":
 		b.sendMainMenu(chatID)
+
+	// Обработка подтверждений
+	case "confirm_action":
+		// Получаем ID действия из данных
+		actionID := callback.Data[len("confirm_action:"):]
+		response, err := b.agent.ConfirmAction(actionID)
+		if err != nil {
+			b.answerCallback(callback.ID, fmt.Sprintf("❌ Ошибка: %v", err))
+			return
+		}
+		b.sendEditMessage(chatID, callback.Message.MessageID, response)
+		b.answerCallback(callback.ID, "✅ Подтверждено")
+		return
+
+	case "reject_action":
+		// Получаем ID действия из данных
+		actionID := callback.Data[len("reject_action:"):]
+		err := b.agent.RejectAction(actionID)
+		if err != nil {
+			b.answerCallback(callback.ID, fmt.Sprintf("❌ Ошибка: %v", err))
+			return
+		}
+		b.sendEditMessage(chatID, callback.Message.MessageID, "✅ Действие отклонено")
+		b.answerCallback(callback.ID, "❌ Отклонено")
+		return
+
+	case "pending_actions":
+		// Показать ожидающие действия
+		actions := b.agent.GetPendingActions()
+		if len(actions) == 0 {
+			b.sendEditMessage(chatID, callback.Message.MessageID, "📋 Нет ожидающих действий")
+		} else {
+			response := "📋 **Ожидающие действия**:\n\n"
+			for _, action := range actions {
+				response += fmt.Sprintf("• `%s` - %s\n", action.ID, action.Query)
+			}
+			response += "\nИспользуйте `ПОДТВЕРЖДАЮ <id>` или `ОТМЕНИТЬ <id>`"
+			b.sendEditMessage(chatID, callback.Message.MessageID, response)
+		}
 	}
 
 	// Отвечаем на callback
 	answer := tgbotapi.NewCallback(callback.ID, "")
 	_, _ = b.api.Request(answer)
+}
+
+// answerCallback отвечает на callback с текстом
+func (b *Bot) answerCallback(callbackID string, text string) {
+	answer := tgbotapi.NewCallback(callbackID, text)
+	_, _ = b.api.Request(answer)
+}
+
+// editMessage редактирует сообщение с курсором
+func (b *Bot) editMessage(messageID int, text string) {
+	// Отправляем редактирование без клавиатуры для скорости
+	// Примечание: эта функция требует chatID, добавим параметр
+}
+
+// editMessageWithChat редактирует сообщение с курсором
+func (b *Bot) editMessageWithChat(chatID int64, messageID int, text string) {
+	// Отправляем редактирование без клавиатуры для скорости
+	msg := tgbotapi.NewEditMessageText(chatID, messageID, text)
+	msg.ParseMode = "Markdown"
+	_, _ = b.api.Send(msg)
+}
+
+// sendConfirmationKeyboard отправляет сообщение с кнопками подтверждения
+func (b *Bot) sendConfirmationKeyboard(chatID int64, text string, actions []*agent.PendingAction) {
+	// Создаём кнопки для каждого ожидающего действия
+	var buttons []tgbotapi.InlineKeyboardButton
+	for _, action := range actions {
+		if action.IsPending() {
+			// Кнопка подтверждения
+			buttons = append(buttons, tgbotapi.NewInlineKeyboardButtonData(
+				fmt.Sprintf("✅ %s", action.ID[len("action_"):len("action_")+8]),
+				fmt.Sprintf("confirm_action:%s", action.ID),
+			))
+		}
+	}
+
+	// Добавляем кнопку отмены
+	buttons = append(buttons, tgbotapi.NewInlineKeyboardButtonData(
+		"❌ Отменить все",
+		"pending_actions",
+	))
+
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(buttons)
+	b.sendMessageWithKeyboard(chatID, text, keyboard)
 }
 
 // sendEditMessage редактирует сообщение

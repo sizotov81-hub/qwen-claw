@@ -135,6 +135,8 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/tasks", s.authMiddleware(s.handleTasks))
 	mux.HandleFunc("/api/skills", s.authMiddleware(s.handleSkills))
 	mux.HandleFunc("/api/status", s.authMiddleware(s.handleStatus))
+	mux.HandleFunc("/api/confirmations", s.authMiddleware(s.handleConfirmations))
+	mux.HandleFunc("/api/confirm", s.authMiddleware(s.handleConfirm))
 
 	// WebSocket
 	mux.HandleFunc("/ws", s.wsAuthMiddleware(s.handleWebSocket))
@@ -491,19 +493,39 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			case "chat":
 				if text, ok := msg["message"].(string); ok {
 					ctx := context.Background()
+					
+					// Отправляем статус "thinking"
+					s.sendWS(conn, map[string]interface{}{
+						"type":    "thinking",
+						"message": "🤔 Думаю...",
+					})
+					
+					// Выполняем запрос
 					response, err := s.agent.Run(ctx, text)
+					
 					if err != nil {
 						s.sendWS(conn, map[string]interface{}{
 							"type":    "error",
 							"message": err.Error(),
 						})
 					} else {
+						// Отправляем ответ с эффектом печати (посимвольно)
 						s.sendWS(conn, map[string]interface{}{
 							"type":      "chat_response",
-							"message":   text,
-							"response":  response,
+							"message":   response,
 							"timestamp": time.Now().Format(time.RFC3339),
+							"streaming": true,
 						})
+						
+						// Проверяем ожидающие действия
+						actions := s.agent.GetPendingActions()
+						if len(actions) > 0 {
+							s.sendWS(conn, map[string]interface{}{
+								"type":     "confirmation",
+								"actions":  actions,
+								"message":  "Требуется подтверждение действия",
+							})
+						}
 					}
 				}
 			}
@@ -567,4 +589,84 @@ type ChatRequest struct {
 type ChatResponse struct {
 	Message   string `json:"message"`
 	Timestamp string `json:"timestamp"`
+}
+
+// handleConfirmations возвращает список ожидающих подтверждений
+func (s *Server) handleConfirmations(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		s.sendError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	actions := s.agent.GetPendingActions()
+
+	// Форматируем ответ
+	data := make([]map[string]interface{}, 0)
+	for _, action := range actions {
+		if action.IsPending() {
+			data = append(data, map[string]interface{}{
+				"id":        action.ID,
+				"query":     action.Query,
+				"type":      string(action.Intent.Type),
+				"created":   action.Created.Format(time.RFC3339),
+				"expires":   action.Expires.Format(time.RFC3339),
+				"is_expired": action.IsExpired(),
+			})
+		}
+	}
+
+	s.sendJSON(w, APIResponse{
+		Success: true,
+		Data:    data,
+	})
+}
+
+// handleConfirm обрабатывает подтверждение действия
+func (s *Server) handleConfirm(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		s.sendError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Парсим JSON запроса
+	var req struct {
+		ActionID string `json:"action_id"`
+		Confirm  bool   `json:"confirm"` // true = подтвердить, false = отклонить
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.sendError(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.ActionID == "" {
+		s.sendError(w, "action_id is required", http.StatusBadRequest)
+		return
+	}
+
+	var response string
+	var err error
+
+	if req.Confirm {
+		response, err = s.agent.ConfirmAction(req.ActionID)
+	} else {
+		err = s.agent.RejectAction(req.ActionID)
+		if err == nil {
+			response = "Action rejected"
+		}
+	}
+
+	if err != nil {
+		s.sendError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	s.sendJSON(w, APIResponse{
+		Success: true,
+		Data: map[string]interface{}{
+			"message":   response,
+			"action_id": req.ActionID,
+			"confirmed": req.Confirm,
+		},
+	})
 }
