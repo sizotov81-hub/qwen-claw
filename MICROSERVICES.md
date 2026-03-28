@@ -88,8 +88,37 @@ qwen-claw/
 ├── web-new/                      # Веб-интерфейс
 ├── scripts/                      # Скрипты
 │   └── generate-proto.sh         # Генерация proto файлов
+├── skills/                       # Система навыков
+│   ├── web-search/              # Поиск в интернете
+│   ├── code-review/             # Ревью кода
+│   ├── github-tools/            # GitHub API
+│   ├── README.md                # Документация
+│   └── GUIDE.md                 # Руководство
 └── docker-compose*.yml           # Docker Compose конфигурации
 ```
+
+---
+
+## 🛠️ Система навыков
+
+Qwen-Claw поддерживает расширяемую систему навыков с:
+- ✅ Формат манифеста SKILL.md
+- ✅ Песочница (Docker)
+- ✅ Система разрешений
+- ✅ Аудит выполнения
+- ✅ CLI управление
+
+### CLI команды:
+
+```bash
+qwen-claw skills list              # Список навыков
+qwen-claw skills run web-search    # Запуск навыка
+qwen-claw skills info web-search   # Информация
+qwen-claw skills validate name     # Валидация
+qwen-claw skills audit             # Журнал аудита
+```
+
+📚 **Документация:** [skills/GUIDE.md](skills/GUIDE.md)
 
 ---
 

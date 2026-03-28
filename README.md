@@ -140,6 +140,64 @@ http://localhost:64656
 
 ---
 
+## 🛠️ Система навыков
+
+Qwen-Claw поддерживает расширяемую систему навыков (skills) — модульных плагинов для расширения функциональности.
+
+### Быстрый старт:
+
+```bash
+# Список навыков
+qwen-claw skills list
+
+# Запуск навыка
+qwen-claw skills run web-search "Golang microservices"
+
+# Информация о навыке
+qwen-claw skills info web-search
+
+# Валидация навыка
+qwen-claw skills validate code-review
+
+# Журнал аудита
+qwen-claw skills audit --limit=20
+```
+
+### Встроенные навыки:
+
+| Навык | Команды | Описание |
+|-------|---------|----------|
+| **shell** | exec, run, shell | Выполнение shell команд |
+| **file** | read, write, edit | Операции с файлами |
+| **search** | search, grep, find | Поиск по коду |
+| **memory** | remember, recall | Управление памятью |
+| **git** | git, status, commit | Git операции |
+| **http** | http, curl, get, post | HTTP запросы |
+| **notify** | notify, alert | Уведомления |
+
+### Примеры навыков:
+
+| Навык | Описание |
+|-------|----------|
+| **web-search** | Поиск в интернете (DuckDuckGo, Google) |
+| **code-review** | Автоматический ревью кода |
+| **github-tools** | Работа с GitHub API (PR, issues) |
+
+### Создание своего навыка:
+
+```bash
+# Структура навыка
+skills/
+└── my-skill/
+    ├── SKILL.md    # Манифест
+    ├── main.sh     # Скрипт
+    └── README.md   # Документация
+```
+
+📚 **Полная документация:** [skills/GUIDE.md](skills/GUIDE.md)
+
+---
+
 ## 🧪 Тестирование
 
 ```bash

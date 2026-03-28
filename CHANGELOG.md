@@ -58,6 +58,17 @@
 - MICROSERVICES_ARCHITECTURE.md
 - STAGE_*_COMPLETE.md отчёты
 
+#### Этап 9: Система навыков
+- Формат манифеста SKILL.md с YAML frontmatter
+- CLI для управления навыками (list, run, info, validate, audit)
+- Песочница для навыков (Docker isolation)
+- Система разрешений (network, filesystem, elevated)
+- Аудит выполнения (JSONL логирование)
+- Локальный реестр навыков
+- Встроенные навыки (7): shell, file, search, memory, git, http, notify
+- Примеры навыков (3): web-search, code-review, github-tools
+- Документация (skills/README.md, skills/GUIDE.md)
+
 ### Изменено
 
 - Рефакторинг логирования (zap вместо log)
