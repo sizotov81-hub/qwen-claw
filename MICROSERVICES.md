@@ -36,6 +36,8 @@ qwen-claw/
 ├── cmd/                          # Точки входа сервисов
 │   ├── api-gateway/
 │   │   ├── main.go               # Точка входа
+│   │   ├── chat.go               # Chat логика
+│   │   ├── chat_server.go        # Chat сервер
 │   │   └── go.mod                # Независимые зависимости
 │   ├── session-memory/
 │   │   ├── main.go
@@ -46,33 +48,58 @@ qwen-claw/
 │   ├── llm-proxy/
 │   │   ├── main.go
 │   │   └── go.mod
-│   └── tools-executor/
-│       ├── main.go
-│       └── go.mod
+│   ├── tools-executor/
+│   │   ├── main.go
+│   │   └── go.mod
+│   └── webui/
+│       └── main.go
 ├── services/
 │   └── common/                   # Общие утилиты
 │       ├── logging/              # Логгер (Zap)
 │       ├── metrics/              # Prometheus метрики
 │       ├── grpcutil/             # Базовый gRPC сервер
 │       └── go.mod                # Общие зависимости
+├── internal/                     # Бизнес-логика
+│   ├── cache/
+│   ├── circuitbreaker/
+│   ├── client/
+│   ├── metrics/
+│   ├── rabbitmq/
+│   ├── server/
+│   └── session/
+├── pkg/                          # Public API
+│   ├── api/
+│   │   └── proto/                # Protocol Buffer определения
+│   └── config/                   # Конфигурация
 ├── bin/                          # Собранные бинарники
 │   ├── api-gateway
 │   ├── session-memory
 │   ├── qwen-wrapper
 │   ├── llm-proxy
-│   └── tools-executor
-├── scripts/
-│   ├── start-api-gateway.sh      # Запуск api-gateway
-│   ├── start-session-memory.sh   # Запуск session-memory
-│   ├── start-qwen-wrapper.sh     # Запуск qwen-wrapper
-│   ├── start-llm-proxy.sh        # Запуск llm-proxy
-│   └── start-tools-executor.sh   # Запуск tools-executor
-└── internal/                     # Бизнес-логика (для монолита)
+│   ├── tools-executor
+│   └── webui
+├── deployments/                  # Деплой
+│   ├── docker/
+│   │   └── services/             # Dockerfile сервисов
+│   └── k8s/                      # Kubernetes манифесты
+├── tests/                        # Тесты
+│   ├── integration/
+│   └── load/
+├── web-new/                      # Веб-интерфейс
+├── scripts/                      # Скрипты
+│   └── generate-proto.sh         # Генерация proto файлов
+└── docker-compose*.yml           # Docker Compose конфигурации
 ```
 
 ---
 
 ## 🚀 Быстрый старт
+
+### Запуск всех сервисов:
+
+```bash
+./start-all.sh
+```
 
 ### Запуск отдельных сервисов:
 
@@ -91,6 +118,12 @@ qwen-claw/
 
 # Tools Executor
 ./start-tools-executor.sh
+```
+
+### Остановка всех сервисов:
+
+```bash
+./stop-all.sh
 ```
 
 ### Переменные окружения:

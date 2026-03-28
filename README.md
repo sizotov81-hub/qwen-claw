@@ -262,38 +262,31 @@ qwen-claw/
 │   ├── qwen-wrapper/
 │   ├── llm-proxy/
 │   ├── tools-executor/
-│   ├── webui/
-│   └── main.go                # Оригинальный CLI
+│   └── webui/
 ├── internal/                  # Внутренняя логика
 │   ├── cache/
 │   ├── circuitbreaker/
 │   ├── client/
-│   ├── config/
-│   ├── gateway/
-│   ├── logger/
-│   ├── memory/
 │   ├── metrics/
 │   ├── rabbitmq/
-│   ├── scheduler/
 │   ├── server/
-│   ├── session/
-│   ├── skills/
-│   └── web/
+│   └── session/
 ├── pkg/                       # Public API
 │   ├── api/
+│   │   └── proto/             # Protocol Buffer определения
 │   └── config/
 ├── deployments/               # Деплой
 │   ├── docker/
-│   ├── helm/
+│   │   └── services/
 │   └── k8s/
 ├── tests/                     # Тесты
 │   ├── integration/
 │   └── load/
 ├── web-new/                   # Веб-интерфейс
-│   ├── index.html
-│   ├── minimum.html
-│   ├── test2.html
-│   └── app.js
+├── services/common/           # Общие утилиты
+│   ├── logging/
+│   ├── metrics/
+│   └── grpcutil/
 ├── scripts/                   # Скрипты
 │   ├── start-all.sh
 │   ├── stop-all.sh
