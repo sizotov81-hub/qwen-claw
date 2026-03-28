@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <title>Qwen-Claw Web UI</title>
+    <style>
+        body { background: #0f172a; color: white; padding: 20px; font-family: sans-serif; }
+        #chat { border: 1px solid #334155; padding: 20px; margin: 20px 0; min-height: 300px; max-height: 500px; overflow-y: auto; }
+        .msg { margin: 10px 0; padding: 10px; border-radius: 8px; }
+        .user { background: #3b82f6; margin-left: 20%; }
+        .bot { background: #334155; margin-right: 20%; }
+        #input { width: 70%; padding: 12px; border-radius: 8px; border: 1px solid #334155; background: #1e293b; color: white; font-size: 16px; }
+        #btn { padding: 12px 24px; border-radius: 8px; border: none; background: #3b82f6; color: white; font-size: 16px; cursor: pointer; }
+        #log { margin-top: 20px; background: #1e293b; padding: 10px; border-radius: 8px; font-family: monospace; font-size: 12px; max-height: 200px; overflow-y: auto; }
+        .status { margin: 10px 0; padding: 10px; background: #1e293b; border-radius: 8px; }
+        .status-item { display: flex; justify-content: space-between; margin: 5px 0; }
+        .online { color: #10b981; }
+        .offline { color: #ef4444; }
+    </style>
+</head>
+<body>
+    <h1>🤖 Qwen-Claw Web UI</h1>
+    
+    <div class="status">
+        <strong>📊 Статус сервисов:</strong>
+        <div class="status-item"><span>API Gateway:</span> <span id="api-gateway" class="online">Online</span></div>
+        <div class="status-item"><span>Session Memory:</span> <span id="session-memory" class="online">Online</span></div>
+        <div class="status-item"><span>Qwen Wrapper:</span> <span id="qwen-wrapper" class="online">Online</span></div>
+        <div class="status-item"><span>LLM Proxy:</span> <span id="llm-proxy" class="online">Online</span></div>
+        <div class="status-item"><span>Tools Executor:</span> <span id="tools-executor" class="online">Online</span></div>
+    </div>
+    
+    <div id="chat">
+        <div class="msg bot">👋 Привет! Я Qwen-Claw, ваш AI-помощник. Введите сообщение для теста.</div>
+    </div>
+    
+    <input type="text" id="input" placeholder="Введите сообщение...">
+    <button id="btn" onclick="send()">📤 Отправить</button>
+    
+    <div id="log"><strong>📋 Лог:</strong><br><span id="log-content"></span></div>
+    
+    <script>
+        (function() {
+            'use strict';
+            
+            var logEl = document.getElementById('log-content');
+            var inputEl = document.getElementById('input');
+            var chatEl = document.getElementById('chat');
+            
+            function log(msg) {
+                logEl.innerHTML += '<br>' + escapeHtml(String(msg));
+                logEl.scrollTop = logEl.scrollHeight;
+                console.log(msg);
+            }
+            
+            function escapeHtml(text) {
+                var div = document.createElement('div');
+                div.textContent = text;
+                return div.innerHTML;
+            }
+            
+            log('=== ЗАГРУЗКА ===');
+            log('input element: ' + (inputEl ? 'найден' : 'НЕ НАЙДЕН'));
+            log('typeof send: ' + typeof send);
+            
+            // Проверка здоровья сервисов
+            function checkHealth() {
+                fetch('/api/health')
+                    .then(function(r) { return r.json(); })
+                    .then(function(data) {
+                        log('✅ Health: ' + data.status);
+                    })
+                    .catch(function(e) {
+                        log('❌ Health error: ' + e.message);
+                    });
+            }
+            
+            window.send = function() {
+                log('=== send() ===');
+                
+                var msg = inputEl.value.trim();
+                log('message: "' + msg + '"');
+                
+                if (!msg) {
+                    log('❌ Пустое');
+                    return;
+                }
+                
+                chatEl.innerHTML += '<div class="msg user"><strong>Вы:</strong> ' + escapeHtml(msg) + '</div>';
+                inputEl.value = '';
+                log('📤 Отправка...');
+                
+                fetch('http://localhost:8085/api/chat', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({content: msg})
+                })
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    log('Status: ' + (data.response ? 'OK' : 'ERROR'));
+                    log('Ответ: ' + escapeHtml(data.response || 'нет ответа'));
+                    chatEl.innerHTML += '<div class="msg bot"><strong>Бот:</strong> ' + escapeHtml(data.response || 'нет ответа') + '</div>';
+                    chatEl.scrollTop = chatEl.scrollHeight;
+                })
+                .catch(function(e) {
+                    log('❌ Ошибка: ' + e.message);
+                    chatEl.innerHTML += '<div class="msg bot">❌ ' + escapeHtml(e.message) + '</div>';
+                    chatEl.scrollTop = chatEl.scrollHeight;
+                });
+            };
+            
+            inputEl.addEventListener('keydown', function(e) {
+                if (e.keyCode === 13) {
+                    e.preventDefault();
+                    send();
+                }
+            });
+            
+            log('=== ГОТОВО ===');
+            
+            // Запуск проверки здоровья
+            checkHealth();
+        })();
+    </script>
+</body>
+</html>

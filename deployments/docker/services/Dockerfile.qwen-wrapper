@@ -1,0 +1,65 @@
+# Dockerfile для Qwen Wrapper Service
+# Многоэтапная сборка для минимизации размера образа
+
+# ============================================
+# Этап 1: Сборка
+# ============================================
+FROM golang:1.25-alpine AS builder
+
+WORKDIR /build
+
+# Установка зависимостей
+RUN apk add --no-cache git ca-certificates
+
+# Копирование common модуля
+COPY services/common /build/services/common
+RUN cd /build/services/common && go mod download
+
+# Копирование сервиса
+COPY cmd/qwen-wrapper /build/cmd/qwen-wrapper
+WORKDIR /build/cmd/qwen-wrapper
+
+# Сборка
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /build/qwen-wrapper .
+
+# ============================================
+# Этап 2: Runtime
+# ============================================
+FROM alpine:3.19
+
+WORKDIR /app
+
+# Установка корневых сертификатов
+RUN apk --no-cache add ca-certificates tzdata
+
+# Создание non-root пользователя
+RUN addgroup -g 1000 qwenclaw && \
+    adduser -D -u 1000 -G qwenclaw qwenclaw
+
+# Копирование бинарника
+COPY --from=builder /build/qwen-wrapper /app/qwen-wrapper
+
+# Настройка прав
+RUN chown -R qwenclaw:qwenclaw /app
+USER qwenclaw
+
+# Переменные окружения
+ENV SERVICE_NAME=qwen-wrapper
+ENV GRPC_PORT=55052
+ENV HTTP_PORT=58082
+ENV METRICS_PORT=59092
+ENV HOST=0.0.0.0
+ENV LOG_LEVEL=info
+ENV LOG_FORMAT=json
+ENV QWEN_PATH=qwen
+
+# Порты
+EXPOSE 55052 58082 59092
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD wget --no-verbose --tries=1 --spider http://localhost:58082/health || exit 1
+
+# Запуск
+ENTRYPOINT ["/app/qwen-wrapper"]
+CMD ["--grpc-port=55052", "--http-port=58082", "--host=0.0.0.0"]

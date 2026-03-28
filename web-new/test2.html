@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Cache-Control" content="no-cache">
+    <title>Qwen-Claw ТЕСТ</title>
+    <style>
+        body { background: #0f172a; color: white; padding: 20px; font-family: Arial; }
+        #chat { border: 1px solid #334155; padding: 20px; margin: 20px 0; min-height: 300px; }
+        .msg { margin: 10px 0; padding: 10px; border-radius: 8px; }
+        .user { background: #3b82f6; margin-left: 20%; }
+        .bot { background: #334155; margin-right: 20%; }
+        input { width: 70%; padding: 12px; border-radius: 8px; border: 1px solid #334155; background: #1e293b; color: white; font-size: 16px; }
+        button { padding: 12px 24px; border-radius: 8px; border: none; background: #3b82f6; color: white; font-size: 16px; cursor: pointer; }
+        button:hover { background: #2563eb; }
+    </style>
+</head>
+<body>
+    <h1>🧪 Qwen-Claw ТЕСТ</h1>
+    <p>Если видите это - HTML работает!</p>
+    
+    <div id="chat">
+        <div class="msg bot">👋 Привет! Введите сообщение для теста.</div>
+    </div>
+    
+    <input type="text" id="msg" placeholder="Введите сообщение..." onkeydown="if(event.keyCode===13)send()">
+    <button onclick="send()">📤 Отправить</button>
+    
+    <div id="log" style="margin-top:20px; background:#1e293b; padding:10px; border-radius:8px;">
+        <strong>Лог:</strong><br>
+        <span id="log-content">Ожидание...</span>
+    </div>
+    
+    <script>
+        // Логирование
+        function log(msg) {
+            const el = document.getElementById('log-content');
+            el.innerHTML += '<br>' + msg;
+            console.log(msg);
+        }
+        
+        log('=== СКРИПТ ЗАГРУЖЕН ===');
+        log('typeof send: ' + typeof send);
+        
+        // Проверка textarea
+        const input = document.getElementById('msg');
+        log('input element: ' + (input ? 'найден' : 'НЕ НАЙДЕН'));
+        log('input.value: "' + input.value + '"');
+        
+        // Отправка
+        async function send() {
+            log('=== send() ВЫЗВАН ===');
+            
+            const msg = input.value.trim();
+            log('message: "' + msg + '"');
+            
+            if (!msg) {
+                log('❌ Пустое сообщение');
+                return;
+            }
+            
+            // Добавляем сообщение в чат
+            const chat = document.getElementById('chat');
+            chat.innerHTML += '<div class="msg user"><strong>Вы:</strong> ' + msg + '</div>';
+            
+            input.value = '';
+            log('📤 Отправка на сервер...');
+            
+            try {
+                const resp = await fetch('http://localhost:8085/api/chat', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({content: msg})
+                });
+                
+                log('Status: ' + resp.status);
+                
+                const data = await resp.json();
+                log('Ответ: ' + JSON.stringify(data));
+                
+                const response = data.response || 'Нет ответа';
+                chat.innerHTML += '<div class="msg bot"><strong>Бот:</strong> ' + response + '</div>';
+                log('✅ Успешно!');
+                
+            } catch (e) {
+                log('❌ Ошибка: ' + e.message);
+                chat.innerHTML += '<div class="msg bot">❌ Ошибка: ' + e.message + '</div>';
+            }
+            
+            // Скролл вниз
+            chat.scrollTop = chat.scrollHeight;
+        }
+        
+        log('=== ГОТОВО ===');
+    </script>
+</body>
+</html>

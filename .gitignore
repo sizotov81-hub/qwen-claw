@@ -55,6 +55,9 @@ qwen-claw.old
 coverage.out
 coverage_partial.out
 
+# Binaries directory
+bin/
+
 # Local data
 internal/agent/.qwen/
 .qwen/local/

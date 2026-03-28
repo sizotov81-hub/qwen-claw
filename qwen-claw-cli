@@ -1,0 +1,308 @@
+#!/bin/bash
+# CLI для управления микросервисами Qwen-Claw
+
+set -e
+
+BIN_DIR="./bin"
+LOG_DIR="./logs"
+PID_DIR="./logs"
+
+# Цвета
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Функция помощи
+show_help() {
+    cat << EOF
+🤖 Qwen-Claw Microservices CLI
+
+Использование: $0 <command> [options]
+
+Команды:
+  start [service]     Запустить сервисы (все или конкретный)
+  stop [service]      Остановить сервисы (все или конкретный)
+  restart [service]   Перезапустить сервисы
+  status              Показать статус сервисов
+  logs [service]      Показать логи сервисов
+  health              Проверить health endpoints
+  metrics             Показать метрики
+  web                 Запустить веб-интерфейс
+  
+Сервисы:
+  api-gateway
+  session-memory
+  qwen-wrapper
+  llm-proxy
+  tools-executor
+
+Примеры:
+  $0 start                  # Запустить все сервисы
+  $0 start api-gateway      # Запустить только API Gateway
+  $0 status                 # Показать статус
+  $0 health                 # Проверить health
+  $0 logs api-gateway       # Показать логи API Gateway
+  $0 stop                   # Остановить все сервисы
+
+EOF
+}
+
+# Функция запуска сервиса
+start_service() {
+    local name=$1
+    local grpc_port=$2
+    local http_port=$3
+    local metrics_port=$4
+    
+    if [ -f "$PID_DIR/$name.pid" ]; then
+        pid=$(cat "$PID_DIR/$name.pid")
+        if kill -0 $pid 2>/dev/null; then
+            echo -e "${YELLOW}⚠️  $name уже запущен (PID: $pid)${NC}"
+            return 0
+        fi
+    fi
+    
+    echo -e "${BLUE}📦 Запуск $name...${NC}"
+    
+    nohup $BIN_DIR/$name \
+        --grpc-port=$grpc_port \
+        --http-port=$http_port \
+        --metrics-port=$metrics_port \
+        --log-format=console \
+        > "$LOG_DIR/$name.log" 2>&1 &
+    
+    echo $! > "$PID_DIR/$name.pid"
+    
+    sleep 2
+    
+    if kill -0 $(cat "$PID_DIR/$name.pid") 2>/dev/null; then
+        echo -e "${GREEN}✅ $name запущен${NC} (gRPC: $grpc_port, HTTP: $http_port)"
+    else
+        echo -e "${RED}❌ $name не запустился${NC}"
+        tail -5 "$LOG_DIR/$name.log"
+        return 1
+    fi
+}
+
+# Функция остановки сервиса
+stop_service() {
+    local name=$1
+    
+    if [ -f "$PID_DIR/$name.pid" ]; then
+        pid=$(cat "$PID_DIR/$name.pid")
+        if kill -0 $pid 2>/dev/null; then
+            kill $pid
+            sleep 1
+            if kill -0 $pid 2>/dev/null; then
+                kill -9 $pid
+            fi
+            echo -e "${GREEN}✅ $name остановлен${NC}"
+        else
+            echo -e "${YELLOW}⚠️  $name не запущен${NC}"
+        fi
+        rm -f "$PID_DIR/$name.pid"
+    else
+        # Пытаемся найти по процессу
+        pid=$(pgrep -f "bin/$name" 2>/dev/null | head -1)
+        if [ -n "$pid" ]; then
+            kill $pid
+            echo -e "${GREEN}✅ $name остановлен (PID: $pid)${NC}"
+        else
+            echo -e "${YELLOW}⚠️  $name не найден${NC}"
+        fi
+    fi
+}
+
+# Проверка статуса сервиса
+check_status() {
+    local name=$1
+    local http_port=$2
+    
+    if [ -f "$PID_DIR/$name.pid" ]; then
+        pid=$(cat "$PID_DIR/$name.pid")
+        if kill -0 $pid 2>/dev/null; then
+            # Проверяем health endpoint
+            health=$(curl -s http://localhost:$http_port/health 2>/dev/null | head -c 50)
+            if [ -n "$health" ]; then
+                echo -e "${GREEN}✅ $name${NC} (PID: $pid) - $health"
+            else
+                echo -e "${YELLOW}⚠️  $name${NC} (PID: $pid) - HTTP не отвечает"
+            fi
+            return 0
+        fi
+    fi
+    
+    # Пытаемся найти по процессу
+    pid=$(pgrep -f "bin/$name" 2>/dev/null | head -1)
+    if [ -n "$pid" ]; then
+        health=$(curl -s http://localhost:$http_port/health 2>/dev/null | head -c 50)
+        if [ -n "$health" ]; then
+            echo -e "${GREEN}✅ $name${NC} (PID: $pid) - $health"
+        else
+            echo -e "${YELLOW}⚠️  $name${NC} (PID: $pid) - HTTP не отвечает"
+        fi
+        return 0
+    fi
+    
+    echo -e "${RED}❌ $name${NC} - не запущен"
+    return 1
+}
+
+# Показать логи
+show_logs() {
+    local name=$1
+    local lines=${2:-30}
+    
+    if [ -f "$LOG_DIR/$name.log" ]; then
+        tail -n $lines "$LOG_DIR/$name.log"
+    else
+        echo -e "${YELLOW}Лог файл не найден: $LOG_DIR/$name.log${NC}"
+    fi
+}
+
+# Проверка health всех сервисов
+check_health() {
+    echo -e "${BLUE}=== Health Check ===${NC}\n"
+    
+    services=("api-gateway" "session-memory" "qwen-wrapper" "llm-proxy" "tools-executor")
+    ports=(8080 8081 8082 8083 8084)
+    
+    for i in "${!services[@]}"; do
+        name="${services[$i]}"
+        port="${ports[$i]}"
+        echo -n "$name (:$port): "
+        health=$(curl -s http://localhost:$port/health 2>/dev/null)
+        if [ -n "$health" ]; then
+            echo -e "${GREEN}$health${NC}"
+        else
+            echo -e "${RED}Не доступен${NC}"
+        fi
+    done
+}
+
+# Основная логика
+case "${1:-help}" in
+    start)
+        service="${2:-all}"
+        echo -e "${BLUE}🚀 Запуск сервисов Qwen-Claw${NC}\n"
+        
+        case "$service" in
+            all)
+                start_service "api-gateway" 55050 58080 59090
+                start_service "session-memory" 55051 58081 59091
+                start_service "qwen-wrapper" 55052 58082 59092
+                start_service "llm-proxy" 55053 58083 59093
+                start_service "tools-executor" 55054 58084 59094
+                echo -e "\n${GREEN}✅ Все сервисы запущены!${NC}"
+                ;;
+            api-gateway)
+                start_service "api-gateway" 55050 58080 59090
+                ;;
+            session-memory)
+                start_service "session-memory" 55051 58081 59091
+                ;;
+            qwen-wrapper)
+                start_service "qwen-wrapper" 55052 58082 59092
+                ;;
+            llm-proxy)
+                start_service "llm-proxy" 55053 58083 59093
+                ;;
+            tools-executor)
+                start_service "tools-executor" 55054 58084 59094
+                ;;
+            *)
+                echo -e "${RED}❌ Неизвестный сервис: $service${NC}"
+                exit 1
+                ;;
+        esac
+        ;;
+    
+    stop)
+        service="${2:-all}"
+        echo -e "${YELLOW}🛑 Остановка сервисов${NC}\n"
+        
+        case "$service" in
+            all)
+                stop_service "tools-executor"
+                stop_service "llm-proxy"
+                stop_service "qwen-wrapper"
+                stop_service "session-memory"
+                stop_service "api-gateway"
+                echo -e "\n${GREEN}✅ Все сервисы остановлены${NC}"
+                ;;
+            *)
+                stop_service "$service"
+                ;;
+        esac
+        ;;
+    
+    restart)
+        service="${2:-all}"
+        $0 stop $service
+        sleep 2
+        $0 start $service
+        ;;
+    
+    status)
+        echo -e "${BLUE}=== Статус сервисов ===${NC}\n"
+        check_status "api-gateway" 58080
+        check_status "session-memory" 58081
+        check_status "qwen-wrapper" 58082
+        check_status "llm-proxy" 58083
+        check_status "tools-executor" 58084
+        ;;
+    
+    logs)
+        service="${2:-api-gateway}"
+        lines="${3:-30}"
+        echo -e "${BLUE}=== Логи: $service ===${NC}\n"
+        show_logs "$service" "$lines"
+        ;;
+    
+    health)
+        check_health
+        ;;
+    
+    metrics)
+        service="${2:-api-gateway}"
+        case "$service" in
+            api-gateway) port=59090 ;;
+            session-memory) port=59091 ;;
+            qwen-wrapper) port=59092 ;;
+            llm-proxy) port=59093 ;;
+            tools-executor) port=59094 ;;
+            *) port=59090 ;;
+        esac
+        echo -e "${BLUE}=== Метрики: $service (:$port) ===${NC}\n"
+        curl -s http://localhost:$port/metrics | head -20
+        ;;
+    
+    web)
+        echo -e "${BLUE}🌐 Запуск веб-интерфейса${NC}\n"
+        nohup $BIN_DIR/webui --host 127.0.0.1 --port 64656 --dir ./web-new > "$LOG_DIR/webui.log" 2>&1 &
+        echo $! > "$PID_DIR/webui.pid"
+        sleep 2
+        if curl -s http://127.0.0.1:64656/api/health > /dev/null 2>&1; then
+            echo -e "${GREEN}✅ Веб-интерфейс запущен!${NC}"
+            echo ""
+            echo "URL: http://127.0.0.1:64656"
+            echo ""
+        else
+            echo -e "${RED}❌ Не удалось запустить веб-интерфейс${NC}"
+        fi
+        ;;
+    
+    help|--help|-h)
+        show_help
+        ;;
+    
+    *)
+        echo -e "${RED}❌ Неизвестная команда: $1${NC}"
+        show_help
+        exit 1
+        ;;
+esac
+
+exit 0

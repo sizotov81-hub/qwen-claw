@@ -1,0 +1,88 @@
+# Базовый Dockerfile для микросервисов Qwen-Claw
+# Многоэтапная сборка для минимизации размера образа
+
+ARG SERVICE_NAME
+
+# ============================================
+# Этап 1: Сборка Go приложения
+# ============================================
+FROM golang:1.21-alpine AS builder
+
+# Устанавливаем зависимости для сборки
+RUN apk add --no-cache git ca-certificates protobuf
+
+# Устанавливаем protoc для Go
+RUN go install google.golang.org/protobuf/cmd/protoc-gen-go@latest && \
+    go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+
+# Устанавливаем рабочую директорию
+WORKDIR /build
+
+# Копируем go.mod и go.sum для кэширования зависимостей
+COPY go.mod go.sum ./
+
+# Загружаем зависимости
+RUN go mod download
+
+# Копируем исходный код
+COPY cmd/ ./cmd/
+COPY internal/ ./internal/
+COPY pkg/ ./pkg/
+
+# Аргумент для имени сервиса
+ARG SERVICE_NAME
+
+# Собираем конкретный сервис
+RUN CGO_ENABLED=0 GOOS=linux go build \
+    -ldflags="-w -s" \
+    -o /build/service \
+    ./cmd/${SERVICE_NAME}/main.go
+
+# ============================================
+# Этап 2: Финальный образ
+# ============================================
+FROM alpine:3.19
+
+# Устанавливаем runtime зависимости
+RUN apk add --no-cache \
+    ca-certificates \
+    tzdata \
+    curl \
+    git \
+    openssh-client \
+    nodejs \
+    npm \
+    && npm install -g qwen-code-cli 2>/dev/null || true
+
+# Создаём пользователя для безопасности
+RUN addgroup -g 1000 qwenclaw && \
+    adduser -D -u 1000 -G qwenclaw qwenclaw
+
+# Устанавливаем рабочую директорию
+WORKDIR /app
+
+# Копируем бинарник из builder
+COPY --from=builder /build/service /app/service
+
+# Копируем health check скрипт
+COPY --chown=qwenclaw:qwenclaw healthcheck.sh /app/healthcheck.sh
+RUN chmod +x /app/healthcheck.sh
+
+# Переключаемся на пользователя без root
+USER qwenclaw
+
+# Экспортируем порт (gRPC)
+EXPOSE 50051
+
+# Переменные окружения
+ENV SERVICE_NAME=${SERVICE_NAME}
+ENV PORT=50051
+ENV LOG_LEVEL=info
+ENV TZ=UTC
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD /app/healthcheck.sh
+
+# Запуск сервиса
+ENTRYPOINT ["/app/service"]

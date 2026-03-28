@@ -1,0 +1,2 @@
+## Qwen Added Memories
+- План микросервисной архитектуры для qwen-claw: 8 этапов - (1)Инфраструктура Docker/K8s, (2)Базовая инфраструктура gRPC/proto, (3)Микросервисы Session&Memory/Qwen Wrapper/LLM Proxy/Tools Executor/API Gateway, (4)Межсервисное взаимодействие gRPC+RabbitMQ, (5)Наблюдаемость Zap/Prometheus/OpenTelemetry, (6)Тестирование unit/integration/load, (7)CI/CD деплой, (8)Документация. Стек: Go, gRPC, Protocol Buffers, Redis/PostgreSQL+pgVector, RabbitMQ, Docker, Kubernetes, Prometheus, Grafana, OpenTelemetry, Zap.

@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Кнопка Тест</title>
+    <style>
+        body { background: #0f172a; color: white; padding: 50px; font-family: Arial; }
+        input { width: 300px; padding: 12px; border-radius: 8px; border: 1px solid #334155; background: #1e293b; color: white; font-size: 16px; }
+        button { padding: 12px 24px; border-radius: 8px; border: none; background: #3b82f6; color: white; font-size: 16px; cursor: pointer; }
+        button:hover { background: #2563eb; }
+        #result { margin-top: 20px; padding: 20px; background: #1e293b; border-radius: 8px; min-height: 100px; }
+    </style>
+</head>
+<body>
+    <h1>🧪 Тест кнопки и Enter</h1>
+    
+    <input type="text" id="msg" placeholder="Введите сообщение..." onkeydown="handleKey(event)">
+    <button onclick="send()">📤 Отправить</button>
+    
+    <div id="result">Ожидание...</div>
+    
+    <script>
+        console.log('=== СКРИПТ ЗАГРУЖЕН ===');
+        
+        function handleKey(e) {
+            console.log('handleKey:', e.keyCode);
+            if (e.keyCode === 13 && !e.shiftKey) {
+                e.preventDefault();
+                console.log('Enter нажат - вызываем send()');
+                send();
+            }
+        }
+        
+        function send() {
+            console.log('=== send() ВЫЗВАН ===');
+            const input = document.getElementById('msg');
+            const msg = input.value.trim();
+            console.log('message:', msg);
+            
+            if (!msg) {
+                document.getElementById('result').innerHTML = '❌ Пустое сообщение';
+                return;
+            }
+            
+            document.getElementById('result').innerHTML = `
+                <div style="margin-bottom:10px;"><strong>Вы:</strong> ${msg}</div>
+                <div><strong>Статус:</strong> ✅ Отправлено (демо)</div>
+                <div style="margin-top:10px;"><strong>Время:</strong> ${new Date().toLocaleTimeString()}</div>
+            `;
+            
+            input.value = '';
+            
+            // Пробуем вызвать настоящий sendMessage если он есть
+            if (typeof window.sendMessage === 'function') {
+                console.log('Вызываем настоящий sendMessage');
+                // window.sendMessage();
+            }
+        }
+        
+        console.log('Функции:', {
+            send: typeof send,
+            handleKey: typeof handleKey,
+            sendMessage: typeof window.sendMessage
+        });
+    </script>
+</body>
+</html>

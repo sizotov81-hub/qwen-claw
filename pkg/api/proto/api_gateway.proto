@@ -1,0 +1,126 @@
+// Protocol Buffers для Qwen-Claw API Gateway
+// Версия: 1.0.0
+
+syntax = "proto3";
+
+package qwenclaw.api.v1;
+
+option go_package = "github.com/user/qwen-claw/pkg/api/proto";
+
+// ============================================
+// Общие типы
+// ============================================
+
+// Уникальный идентификатор сессии
+message SessionID {
+    string id = 1;
+}
+
+// Пустое сообщение
+message Empty {}
+
+// Статус операции
+message OperationStatus {
+    bool success = 1;
+    string message = 2;
+}
+
+// ============================================
+// API Gateway Service
+// ============================================
+
+service APIGateway {
+    // Создать новую сессию
+    rpc CreateSession(CreateSessionRequest) returns (Session);
+    
+    // Получить информацию о сессии
+    rpc GetSession(SessionID) returns (Session);
+    
+    // Отправить сообщение и получить streaming ответ
+    rpc SendMessage(SendMessageRequest) returns (stream Token);
+    
+    // Получить историю сессии
+    rpc GetSessionHistory(GetSessionHistoryRequest) returns (SessionHistory);
+    
+    // Выполнить инструмент
+    rpc ExecuteTool(ToolRequest) returns (ToolResult);
+    
+    // Удалить сессию
+    rpc DeleteSession(SessionID) returns (OperationStatus);
+}
+
+// ============================================
+// Запросы и ответы
+// ============================================
+
+// Запрос на создание сессии
+message CreateSessionRequest {
+    string user_id = 1;
+    string title = 2;
+    map<string, string> metadata = 3;
+}
+
+// Сессия
+message Session {
+    string id = 1;
+    string user_id = 2;
+    string title = 3;
+    int64 created_at = 4;
+    int64 updated_at = 5;
+    int64 last_accessed_at = 6;
+    map<string, string> metadata = 7;
+}
+
+// Запрос на отправку сообщения
+message SendMessageRequest {
+    string session_id = 1;
+    string content = 2;
+    string model = 3;
+    map<string, string> options = 4;
+}
+
+// Токен ответа (streaming)
+message Token {
+    string content = 1;
+    bool is_final = 2;
+}
+
+// Запрос на получение истории
+message GetSessionHistoryRequest {
+    string session_id = 1;
+    int32 limit = 2;
+    int32 offset = 3;
+}
+
+// История сессии
+message SessionHistory {
+    string session_id = 1;
+    repeated Message messages = 2;
+    int32 total_count = 3;
+}
+
+// Сообщение
+message Message {
+    string id = 1;
+    string session_id = 2;
+    string role = 3; // user/assistant/system
+    string content = 4;
+    int32 tokens = 5;
+    int64 created_at = 6;
+    map<string, string> metadata = 7;
+}
+
+// Запрос на выполнение инструмента
+message ToolRequest {
+    string session_id = 1;
+    string tool_name = 2;
+    map<string, string> args = 3;
+}
+
+// Результат выполнения инструмента
+message ToolResult {
+    bool success = 1;
+    string output = 2;
+    string error = 3;
+    map<string, string> metadata = 4;
+}

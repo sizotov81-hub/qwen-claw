@@ -1,0 +1,262 @@
+# Docker Compose для микросервисной архитектуры Qwen-Claw
+# Для локальной разработки
+
+version: '3.8'
+
+services:
+  # ============================================
+  # Инфраструктурные сервисы
+  # ============================================
+
+  # PostgreSQL с pgVector для памяти
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: qwen-claw-postgres
+    environment:
+      POSTGRES_USER: qwenclaw
+      POSTGRES_PASSWORD: qwenclaw_password
+      POSTGRES_DB: qwenclaw
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./deployments/docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U qwenclaw"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - qwen-claw-net
+
+  # Redis для кэша сессий
+  redis:
+    image: redis:7-alpine
+    container_name: qwen-claw-redis
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - qwen-claw-net
+
+  # RabbitMQ для асинхронных задач
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: qwen-claw-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: qwenclaw
+      RABBITMQ_DEFAULT_PASS: qwenclaw_password
+    ports:
+      - "5672:5672"   # AMQP
+      - "15672:15672" # Management UI
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - qwen-claw-net
+
+  # Jaeger для трассировки
+  jaeger:
+    image: jaegertracing/all-in-one:1.53
+    container_name: qwen-claw-jaeger
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP
+      - "16686:16686" # UI
+    networks:
+      - qwen-claw-net
+
+  # Prometheus для метрик
+  prometheus:
+    image: prom/prometheus:v2.48.0
+    container_name: qwen-claw-prometheus
+    volumes:
+      - ./deployments/docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    ports:
+      - "9090:9090"
+    networks:
+      - qwen-claw-net
+
+  # Grafana для визуализации
+  grafana:
+    image: grafana/grafana:10.2.0
+    container_name: qwen-claw-grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_INSTALL_PLUGINS: grafana-clock-panel,grafana-piechart-panel
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./deployments/docker/grafana/provisioning:/etc/grafana/provisioning
+    depends_on:
+      - prometheus
+    networks:
+      - qwen-claw-net
+
+  # ============================================
+  # Микросервисы Qwen-Claw
+  # ============================================
+
+  # Session & Memory Service
+  session-memory:
+    build:
+      context: .
+      dockerfile: deployments/docker/Dockerfile.service
+      args:
+        SERVICE_NAME: session-memory
+    container_name: qwen-claw-session-memory
+    environment:
+      - SERVICE_NAME=session-memory
+      - PORT=55051
+      - DATABASE_URL=postgres://qwenclaw:qwenclaw_password@postgres:5432/qwenclaw?sslmode=disable
+      - REDIS_URL=redis://redis:6379
+      - LOG_LEVEL=info
+      - JAEGER_ENDPOINT=jaeger:4317
+    ports:
+      - "55051:55051"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - qwen-claw-net
+    restart: unless-stopped
+
+  # Qwen Wrapper Service
+  qwen-wrapper:
+    build:
+      context: .
+      dockerfile: deployments/docker/Dockerfile.service
+      args:
+        SERVICE_NAME: qwen-wrapper
+    container_name: qwen-claw-qwen-wrapper
+    environment:
+      - SERVICE_NAME=qwen-wrapper
+      - PORT=55052
+      - SESSION_MEMORY_ADDR=session-memory:55051
+      - LOG_LEVEL=info
+      - JAEGER_ENDPOINT=jaeger:4317
+      - QWEN_CLAW_MODEL=${QWEN_CLAW_MODEL:-}
+      - QWEN_CLAW_API_KEY=${QWEN_CLAW_API_KEY:-}
+    ports:
+      - "55052:55052"
+    depends_on:
+      - session-memory
+    networks:
+      - qwen-claw-net
+    restart: unless-stopped
+
+  # LLM Proxy Service
+  llm-proxy:
+    build:
+      context: .
+      dockerfile: deployments/docker/Dockerfile.service
+      args:
+        SERVICE_NAME: llm-proxy
+    container_name: qwen-claw-llm-proxy
+    environment:
+      - SERVICE_NAME=llm-proxy
+      - PORT=55053
+      - LOG_LEVEL=info
+      - JAEGER_ENDPOINT=jaeger:4317
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY:-}
+    ports:
+      - "55053:55053"
+    networks:
+      - qwen-claw-net
+    restart: unless-stopped
+
+  # Tools Executor Service
+  tools-executor:
+    build:
+      context: .
+      dockerfile: deployments/docker/Dockerfile.service
+      args:
+        SERVICE_NAME: tools-executor
+    container_name: qwen-claw-tools-executor
+    environment:
+      - SERVICE_NAME=tools-executor
+      - PORT=55054
+      - LOG_LEVEL=info
+      - JAEGER_ENDPOINT=jaeger:4317
+      - DOCKER_HOST=unix:///var/run/docker.sock
+    ports:
+      - "55054:55054"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - qwen-claw-net
+    restart: unless-stopped
+
+  # API Gateway / Orchestrator
+  api-gateway:
+    build:
+      context: .
+      dockerfile: deployments/docker/Dockerfile.service
+      args:
+        SERVICE_NAME: api-gateway
+    container_name: qwen-claw-api-gateway
+    environment:
+      - SERVICE_NAME=api-gateway
+      - HTTP_PORT=58080
+      - GRPC_PORT=55050
+      - SESSION_MEMORY_ADDR=session-memory:55051
+      - QWEN_WRAPPER_ADDR=qwen-wrapper:55052
+      - LLM_PROXY_ADDR=llm-proxy:55053
+      - TOOLS_EXECUTOR_ADDR=tools-executor:55054
+      - RABBITMQ_URL=amqp://qwenclaw:qwenclaw_password@rabbitmq:5672/
+      - LOG_LEVEL=info
+      - JAEGER_ENDPOINT=jaeger:4317
+    ports:
+      - "58080:58080"   # HTTP/REST
+      - "55050:55050" # gRPC
+    depends_on:
+      - session-memory
+      - qwen-wrapper
+      - llm-proxy
+      - tools-executor
+      - rabbitmq
+    networks:
+      - qwen-claw-net
+    restart: unless-stopped
+
+# Сети
+networks:
+  qwen-claw-net:
+    driver: bridge
+    name: qwen-claw-network
+
+# Тома
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  rabbitmq_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local

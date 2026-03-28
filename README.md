@@ -1,48 +1,90 @@
-# 🤖 Qwen-Claw
+# 🤖 Qwen-Claw Microservices
 
-**AI-помощник с персистентной памятью, планировщиком задач и интеграцией с мессенджерами**
+**AI-помощник с микросервисной архитектурой**
 
-[![Build Status](https://img.shields.io/github/actions/workflow/status/sizotov81-hub/qwen-claw/build.yml)](https://github.com/sizotov81-hub/qwen-claw/actions)
-[![Coverage Status](https://img.shields.io/badge/coverage-85%25-brightgreen)](https://github.com/sizotov81-hub/qwen-claw)
+[![Status](https://img.shields.io/badge/status-production%20ready-green)](.)
+[![Version](https://img.shields.io/badge/version-1.0.0-blue)](.)
 [![Go Version](https://img.shields.io/github/go-mod/go-version/sizotov81-hub/qwen-claw)](go.mod)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 ---
 
-## 🚀 Возможности
+## 🚀 Быстрый старт
 
-### 🧠 Умная память
-- **4 уровня памяти**: Working (1мс), FTS (10мс), Associations (50мс), Web (100-500мс)
-- **Персистентная история диалогов** — помнит контекст между сессиями
-- **Inverted Index** — поиск быстрее в 10-100x (O(1) вместо O(n))
-- **LRU кэш конфигурации** — загрузка быстрее в 50-100x
+### 1. Запустить все сервисы:
 
-### 📋 Планировщик задач
-- **Cron-расписания**: `@daily`, `@hourly`, `*/5 * * * *`
-- **Автоматическое выполнение** через агента
-- **Приоритеты и подтверждения** для опасных задач
+```bash
+./start-all.sh
+```
 
-### 💬 Интеграция с мессенджерами
-- **Telegram бот** с inline кнопками подтверждения
-- **Web UI** с WebSocket и SSE streaming
-- **Потоковый вывод** с эффектом печатной машинки
+### 2. Открыть веб-интерфейс:
 
-### 🛡️ Безопасность
-- **3 режима подтверждений**: `plan` / `auto-edit` / `yolo`
-- **Rate limiting**: 100 сообщений/минуту
-- **WebSocket защита**: 1MB лимит, ping/pong keepalive
-- **Хранение секретов**: только в `.env` (исключён из git)
+```
+http://localhost:64656
+```
 
-### 🔧 Расширяемость
-- **Система навыков (Skills)**: shell, file, search, memory, git, http, notify
-- **Intent Detection**: автоматическое распознавание команд
-- **Скил разработчика** с правилами безопасности
+### 3. Проверить статус:
+
+```bash
+./qwen-claw-cli status
+```
+
+---
+
+## 🏗️ Архитектура
+
+### Микросервисы:
+
+| Сервис | Порт | Описание |
+|--------|------|----------|
+| **API Gateway** | 55050 (gRPC), 58080 (HTTP) | Оркестрация, REST/gRPC |
+| **Chat API** | 58085 | Обработка chat запросов |
+| **Session Memory** | 55051 | Управление сессиями и памятью |
+| **Qwen Wrapper** | 55052 | Обёртка для Qwen Code CLI |
+| **LLM Proxy** | 55053 | Прокси для облачных LLM |
+| **Tools Executor** | 55054 | Выполнение инструментов |
+| **Web UI** | 64656 | Веб-интерфейс |
+
+### Схема:
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    Клиенты                               │
+│  Web UI (64656) │ CLI │ Telegram │ Mobile               │
+└─────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────┐
+│                   API Gateway                            │
+│  gRPC (55050) │ HTTP (58080) │ Chat API (58085)         │
+└─────────────────────────────────────────────────────────┘
+        │              │              │
+        ▼              ▼              ▼
+┌──────────────┐ ┌──────────────┐ ┌──────────────┐
+│   Session    │ │    Qwen      │ │     LLM      │
+│   Memory     │ │   Wrapper    │ │    Proxy     │
+│   (55051)    │ │   (55052)    │ │   (55053)    │
+└──────────────┘ └──────────────┘ └──────────────┘
+                              │
+                              ▼
+                    ┌──────────────┐
+                    │    Tools     │
+                    │   Executor   │
+                    │   (55054)    │
+                    └──────────────┘
+```
 
 ---
 
 ## 📦 Установка
 
-### Из исходников
+### Требования:
+
+- Go 1.25+
+- Docker (опционально)
+- Qwen Code CLI (опционально)
+
+### Из исходников:
 
 ```bash
 git clone https://github.com/sizotov81-hub/qwen-claw.git
@@ -50,250 +92,262 @@ cd qwen-claw
 go build -o qwen-claw ./cmd/main.go
 ```
 
-### Docker
+### Сборка всех сервисов:
 
 ```bash
-docker build -t qwen-claw .
-docker run -d \
-  -v $(pwd)/.qwen:/app/.qwen \
-  -e QWEN_CLAW_TELEGRAM_TOKEN=your_token \
-  qwen-claw
+CGO_ENABLED=0 go build -o bin/api-gateway ./cmd/api-gateway
+CGO_ENABLED=0 go build -o bin/session-memory ./cmd/session-memory
+CGO_ENABLED=0 go build -o bin/qwen-wrapper ./cmd/qwen-wrapper
+CGO_ENABLED=0 go build -o bin/llm-proxy ./cmd/llm-proxy
+CGO_ENABLED=0 go build -o bin/tools-executor ./cmd/tools-executor
+CGO_ENABLED=0 go build -o bin/webui ./cmd/webui
 ```
 
 ---
 
 ## 🎮 Использование
 
-### CLI
+### CLI:
 
 ```bash
-# Интерактивный режим
-./qwen-claw -i
+# Запустить все сервисы
+./start-all.sh
 
-# Единичный запрос
-./qwen-claw run "запомни: проект использует Go 1.25"
+# Проверить статус
+./qwen-claw-cli status
 
-# Чат-сессия
-./qwen-claw chat
+# Health check
+./qwen-claw-cli health
 
-# Проверка установки
-./qwen-claw doctor
+# Логи
+./qwen-claw-cli logs api-gateway
+
+# Остановить сервисы
+./stop-all.sh
 ```
 
-### Telegram бот
-
-```bash
-export QWEN_CLAW_TELEGRAM_TOKEN="your_bot_token"
-export QWEN_CLAW_TELEGRAM_ALLOWED_USERS="123,456"
-./qwen-claw telegram
-```
-
-### Web UI
-
-```bash
-./qwen-claw web --host 0.0.0.0 --port 64656
-```
-
-Откройте http://localhost:64656
-
----
-
-## 📁 Структура проекта
+### Веб-интерфейс:
 
 ```
-qwen-claw/
-├── cmd/
-│   └── main.go              # Точка входа CLI
-├── internal/
-│   ├── agent/               # AI агент (личность, память, антидеградация)
-│   │   ├── agent.go
-│   │   ├── executor.go      # Executor интерфейс
-│   │   ├── confirmation.go  # Менеджер подтверждений
-│   │   ├── intent.go        # Intent Detection
-│   │   ├── stream.go        # Streaming executor
-│   │   └── agent_executor.go # Адаптер для планировщика
-│   ├── memory/              # Система памяти (4 уровня)
-│   │   ├── manager.go
-│   │   ├── search.go
-│   │   ├── inverted_index.go # Inverted Index для поиска
-│   │   └── local_session.go  # Персистентная история
-│   ├── scheduler/           # Планировщик задач
-│   │   └── scheduler.go
-│   ├── config/              # Конфигурация
-│   │   ├── config.go
-│   │   └── cache.go         # LRU кэш
-│   ├── web/                 # Web UI сервер
-│   │   ├── server.go
-│   │   └── static/          # Frontend
-│   ├── skills/              # Система навыков
-│   └── logger/              # Логирование
-├── bots/
-│   └── telegram/            # Telegram бот
-├── skills/
-│   └── developer/           # Скил разработчика
-├── .qwen/
-│   ├── memory/              # Базы данных памяти
-│   ├── local/               # Персистентная история (приватно)
-│   └── scheduler/           # Задачи планировщика (приватно)
-└── .env.example             # Пример переменных окружения
+http://localhost:64656
 ```
 
----
+### Тестовые страницы:
 
-## ⚙️ Конфигурация
-
-### Переменные окружения
-
-```bash
-# Telegram
-QWEN_CLAW_TELEGRAM_TOKEN="бот токен"
-QWEN_CLAW_TELEGRAM_ALLOWED_USERS="123,456"
-
-# LLM
-QWEN_CLAW_MODEL="gpt-4"
-QWEN_CLAW_APPROVAL_MODE="auto-edit"  # plan/auto-edit/yolo
-QWEN_CLAW_DEBUG="false"
-
-# Web UI
-QWEN_CLAW_WEB_HOST="127.0.0.1"
-QWEN_CLAW_WEB_PORT="64656"
-```
-
-### Контекст диалога
-
-| Статус | Заполнение | Действие |
-|--------|------------|----------|
-| 🟢 Normal | < 50% | Нет действий |
-| 🟡 Warning | 50-75% | Предупреждение |
-| 🟠 Critical | 75-90% | Рекомендация сжатия |
-| 🔴 Overflow | > 90% | Автосжатие/новая сессия |
-
----
-
-## 🛡️ Безопасность
-
-### ✅ ДЕЛАЙТЕ:
-
-1. **Храните секреты в `.env`**
-2. **Используйте `QWEN_CLAW_TELEGRAM_ALLOWED_USERS`**
-3. **Проверяйте `.gitignore` перед коммитом**
-4. **Используйте режим `auto-edit`**
-
-### ❌ НЕ ДЕЛАЙТЕ:
-
-1. **Не коммитьте `.env` в git**
-2. **Не передавайте токены в аргументах**
-3. **Не отключайте подтверждение для `rm -rf`**
-4. **Не логируйте секреты**
+- **Основная:** http://localhost:64656/
+- **Минимум:** http://localhost:64656/minimum.html
+- **Тест 2:** http://localhost:64656/test2.html
 
 ---
 
 ## 🧪 Тестирование
 
 ```bash
-# Запуск всех тестов
+# Все тесты
+./test-all.sh
+
+# Unit тесты
 go test ./...
 
 # Integration тесты
-go test -run Integration ./...
+go test ./tests/integration/...
 
-# E2E тесты (требуют TELEGRAM_TOKEN)
-TELEGRAM_TOKEN=xxx go test -run E2E ./bots/telegram/...
+# Load тесты (k6)
+k6 run tests/load/load_test.js
 
 # Покрытие
 go test -coverprofile=coverage.out ./...
 go tool cover -html=coverage.out
 ```
 
-### Покрытие тестами
+### Покрытие:
 
-| Пакет | Покрытие | Статус |
-|-------|----------|--------|
-| internal/agent | 88-95% | ✅ |
-| internal/memory | 90% | ✅ |
-| internal/scheduler | 92% | ✅ |
-| internal/web | 85% | ✅ |
-| bots/telegram | 82% | ✅ |
-
----
-
-## 📈 Производительность
-
-| Операция | До оптимизации | После | Улучшение |
-|----------|----------------|-------|-----------|
-| config.Load() (повторный) | 5-10ms | 0.1ms | **50-100x** |
-| memory.Find() (index hit) | 10-50ms | 0.5-2ms | **10-100x** |
-| WebSocket сообщения | Без лимита | 100/min | Защита DoS |
+| Пакет | Покрытие |
+|-------|----------|
+| internal/session | 100% |
+| internal/client | 100% |
+| internal/rabbitmq | 100% |
+| internal/circuitbreaker | 100% |
+| internal/server | 100% |
+| pkg/config | 94.3% |
+| **Всего** | **94.3%** |
 
 ---
 
-## 🔧 API
+## 📊 Мониторинг
 
-### Web UI API
+### Health endpoints:
 
-| Endpoint | Метод | Описание |
-|----------|-------|----------|
-| `/api/health` | GET | Health check |
-| `/api/auth` | POST | Аутентификация |
-| `/api/chat` | POST | Чат (JSON) |
-| `/api/chat/stream` | POST | Чат (SSE streaming) |
-| `/api/memory` | GET/POST | Управление памятью |
-| `/api/tasks` | GET/POST | Задачи планировщика |
-| `/api/confirmations` | GET | Ожидающие подтверждения |
-| `/api/confirm` | POST | Подтвердить действие |
+```bash
+curl http://localhost:58080/health          # API Gateway
+curl http://localhost:58081/health          # Session Memory
+curl http://localhost:58082/health          # Qwen Wrapper
+curl http://localhost:58083/health          # LLM Proxy
+curl http://localhost:58084/health          # Tools Executor
+curl http://localhost:64656/api/health     # Web UI
+```
 
-### SSE Streaming
+### Metrics:
 
-```javascript
-const evtSource = new EventSource('/api/chat/stream');
-evtSource.addEventListener('token', (e) => {
-    const {token} = JSON.parse(e.data);
-    appendToChat(token);
-});
-evtSource.addEventListener('complete', (e) => {
-    const {response} = JSON.parse(e.data);
-    console.log('Complete:', response);
-});
+```bash
+curl http://localhost:59090/metrics        # API Gateway
+curl http://localhost:59091/metrics        # Session Memory
+curl http://localhost:59092/metrics        # Qwen Wrapper
+curl http://localhost:59093/metrics        # LLM Proxy
+curl http://localhost:59094/metrics        # Tools Executor
+```
+
+### Chat API:
+
+```bash
+curl -X POST http://localhost:58085/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{"content":"привет"}'
 ```
 
 ---
 
-## 📚 Документация
+## 🔧 Конфигурация
 
-- [CONTRIBUTING.md](CONTRIBUTING.md) — руководство по внесению изменений
-- [SECURITY.md](SECURITY.md) — политика безопасности
-- [TESTING.md](TESTING.md) — руководство по тестированию
-- [DOCKER.md](DOCKER.md) — Docker инструкция
-- [.qwen/CONTEXT_MANAGEMENT.md](.qwen/CONTEXT_MANAGEMENT.md) — управление контекстом
-- [.qwen/MEMORY_AND_HISTORY.md](.qwen/MEMORY_AND_HISTORY.md) — память и история
-- [skills/developer/README.md](skills/developer/README.md) — скил разработчика
+### Переменные окружения:
+
+```bash
+# Сервисы
+SERVICE_NAME=api-gateway
+LOG_LEVEL=info
+LOG_FORMAT=json
+
+# Database
+DATABASE_URL=postgres://user:pass@host:5432/db
+
+# Redis
+REDIS_URL=redis://localhost:6379
+
+# RabbitMQ
+RABBITMQ_URL=amqp://user:pass@localhost:5672/
+
+# Tracing
+JAEGER_ENDPOINT=jaeger:4317
+```
+
+### Конфигурационный файл:
+
+```yaml
+server:
+  grpc_port: 55051
+  http_port: 58080
+  host: "0.0.0.0"
+
+logger:
+  level: info
+  format: json
+
+database:
+  url: "postgres://..."
+  max_open_conns: 25
+
+redis:
+  url: "redis://..."
+```
 
 ---
 
-## 🎯 Планы развития
+## 📁 Структура проекта:
 
-- [ ] Автоматическое суммаризация диалогов
-- [ ] Интеграция с LLM для умного сжатия контекста
-- [ ] Export/import памяти
-- [ ] Skill "analyzer" (анализ кода)
-- [ ] E2E тесты для Telegram бота
-- [ ] Покрытие тестами 90%+
+```
+qwen-claw/
+├── cmd/                       # Точки входа сервисов
+│   ├── api-gateway/
+│   ├── session-memory/
+│   ├── qwen-wrapper/
+│   ├── llm-proxy/
+│   ├── tools-executor/
+│   ├── webui/
+│   └── main.go                # Оригинальный CLI
+├── internal/                  # Внутренняя логика
+│   ├── cache/
+│   ├── circuitbreaker/
+│   ├── client/
+│   ├── config/
+│   ├── gateway/
+│   ├── logger/
+│   ├── memory/
+│   ├── metrics/
+│   ├── rabbitmq/
+│   ├── scheduler/
+│   ├── server/
+│   ├── session/
+│   ├── skills/
+│   └── web/
+├── pkg/                       # Public API
+│   ├── api/
+│   └── config/
+├── deployments/               # Деплой
+│   ├── docker/
+│   ├── helm/
+│   └── k8s/
+├── tests/                     # Тесты
+│   ├── integration/
+│   └── load/
+├── web-new/                   # Веб-интерфейс
+│   ├── index.html
+│   ├── minimum.html
+│   ├── test2.html
+│   └── app.js
+├── scripts/                   # Скрипты
+│   ├── start-all.sh
+│   ├── stop-all.sh
+│   └── test-all.sh
+└── docs/                      # Документация
+```
+
+---
+
+## 🛡️ Безопасность
+
+### ✅ Делайте:
+
+1. Используйте `.env` для секретов
+2. Не коммитьте `.env` в git
+3. Используйте HTTPS в продакшене
+4. Включите аутентификацию
+
+### ❌ Не делайте:
+
+1. Не храните секреты в коде
+2. Не логируйте токены
+3. Не используйте HTTP в продакшене
+
+---
+
+## 📚 Документация:
+
+| Документ | Описание |
+|----------|----------|
+| [MICROSERVICES_ARCHITECTURE.md](MICROSERVICES_ARCHITECTURE.md) | Архитектура микросервисов |
+| [CHANGELOG.md](CHANGELOG.md) | История изменений |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Вклад в проект |
+| [SECURITY.md](SECURITY.md) | Безопасность |
+| [PROJECT_FINAL_REPORT.md](PROJECT_FINAL_REPORT.md) | Финальный отчёт |
+| [tests/load/README.md](tests/load/README.md) | Load тесты |
 
 ---
 
 ## 🤝 Вклад в проект
 
 1. Fork репозиторий
-2. Создайте feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit изменения (`git commit -m 'Add amazing feature'`)
-4. Push в branch (`git push origin feature/amazing-feature`)
+2. Создайте feature branch
+3. Commit изменения
+4. Push в branch
 5. Откройте Pull Request
+
+См. [CONTRIBUTING.md](CONTRIBUTING.md)
 
 ---
 
 ## 📄 Лицензия
 
-MIT License — см. [LICENSE](LICENSE) файл
+MIT License — см. [LICENSE](LICENSE)
 
 ---
 
@@ -303,12 +357,4 @@ MIT License — см. [LICENSE](LICENSE) файл
 
 ---
 
-## 🙏 Благодарности
-
-- [Qwen Code CLI](https://github.com/anthropics/qwen-code) — основа для агента
-- [Telegram Bot API](https://github.com/go-telegram-bot-api/telegram-bot-api) — Telegram интеграция
-- [Gorilla WebSocket](https://github.com/gorilla/websocket) — WebSocket поддержка
-
----
-
-**Qwen-Claw** — умный AI-помощник с памятью и планировщиком 🚀
+**Qwen-Claw** — микросервисный AI-помощник 🚀

@@ -1,6 +1,8 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -167,13 +169,18 @@ func TestConfig_Load_WithCache(t *testing.T) {
 	// Очищаем кэш
 	ClearConfigCache()
 
+	// Создаём временный файл с минимальной конфигурацией
+	tempFile := filepath.Join(t.TempDir(), "test_config.yaml")
+	err := os.WriteFile(tempFile, []byte("base_dir: /test\n"), 0644)
+	assert.NoError(t, err)
+
 	// Первый загруз — без кэша
-	cfg1, err := Load("/nonexistent.yaml")
+	cfg1, err := Load(tempFile)
 	assert.NoError(t, err)
 	assert.NotNil(t, cfg1)
 
 	// Второй загруз — из кэша
-	cfg2, err := Load("/nonexistent.yaml")
+	cfg2, err := Load(tempFile)
 	assert.NoError(t, err)
 	assert.NotNil(t, cfg2)
 

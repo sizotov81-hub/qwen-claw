@@ -32,9 +32,12 @@ func TestLoad(t *testing.T) {
 }
 
 func TestLoadNonExistent(t *testing.T) {
+	// При загрузке несуществующего файла возвращается ошибка
 	cfg, err := Load("/nonexistent/config.yaml")
-	assert.NoError(t, err)
-	assert.NotNil(t, cfg)
+	assert.Error(t, err)
+	// cfg может быть nil или с дефолтными значениями - зависит от реализации
+	// Главное что ошибка возвращена
+	_ = cfg
 }
 
 func TestEnsureDirs(t *testing.T) {

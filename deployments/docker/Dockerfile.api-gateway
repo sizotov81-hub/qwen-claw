@@ -1,0 +1,71 @@
+# Dockerfile для API Gateway Service
+# Многоэтапная сборка для минимизации размера образа
+
+# ============================================
+# Этап 1: Сборка
+# ============================================
+FROM golang:1.21-alpine AS builder
+
+# Устанавливаем зависимости
+RUN apk add --no-cache git ca-certificates
+
+WORKDIR /build
+
+# Копируем go.mod и go.sum
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Копируем исходный код
+COPY cmd/api-gateway/ ./cmd/api-gateway/
+COPY internal/ ./internal/
+COPY pkg/ ./pkg/
+
+# Собираем с оптимизациями
+RUN CGO_ENABLED=0 GOOS=linux go build \
+    -ldflags="-w -s -X main.Version=${VERSION:-dev}" \
+    -o /build/api-gateway \
+    ./cmd/api-gateway
+
+# ============================================
+# Этап 2: Финальный образ
+# ============================================
+FROM alpine:3.19
+
+# Устанавливаем runtime зависимости
+RUN apk add --no-cache \
+    ca-certificates \
+    tzdata \
+    curl
+
+# Создаём пользователя
+RUN addgroup -g 1000 qwenclaw && \
+    adduser -D -u 1000 -G qwenclaw qwenclaw
+
+WORKDIR /app
+
+# Копируем бинарник
+COPY --from=builder /build/api-gateway /app/api-gateway
+
+# Копируем конфигурацию
+COPY pkg/config/config.yaml /app/config.yaml
+
+# Устанавливаем права
+RUN chown -R qwenclaw:qwenclaw /app
+
+USER qwenclaw
+
+# Экспортируем порты
+EXPOSE 50050 8080
+
+# Переменные окружения
+ENV SERVICE_NAME=api-gateway
+ENV PORT=8080
+ENV GRPC_PORT=50050
+ENV LOG_LEVEL=info
+ENV TZ=UTC
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8080/health || exit 1
+
+ENTRYPOINT ["/app/api-gateway"]

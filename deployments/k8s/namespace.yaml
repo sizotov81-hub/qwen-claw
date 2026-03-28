@@ -1,0 +1,9 @@
+# Namespace для Qwen-Claw
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: qwen-claw
+  labels:
+    name: qwen-claw
+    app.kubernetes.io/name: qwen-claw
+    app.kubernetes.io/part-of: qwen-claw

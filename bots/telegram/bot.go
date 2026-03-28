@@ -163,7 +163,9 @@ func (b *Bot) Start() error {
 // Stop останавливает бота
 func (b *Bot) Stop() {
 	b.running = false
-	b.api.StopReceivingUpdates()
+	if b.api != nil {
+		b.api.StopReceivingUpdates()
+	}
 	logger.Info("Telegram bot stopped")
 }
 

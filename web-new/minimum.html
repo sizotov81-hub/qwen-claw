@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Cache-Control" content="no-cache">
+    <title>Qwen-Claw МИНИМУМ</title>
+    <style>
+        body { background: #0f172a; color: white; padding: 20px; font-family: sans-serif; }
+        #chat { border: 1px solid #334155; padding: 20px; margin: 20px 0; min-height: 300px; max-height: 500px; overflow-y: auto; }
+        .msg { margin: 10px 0; padding: 10px; border-radius: 8px; }
+        .user { background: #3b82f6; margin-left: 20%; }
+        .bot { background: #334155; margin-right: 20%; }
+        #input { width: 70%; padding: 12px; border-radius: 8px; border: 1px solid #334155; background: #1e293b; color: white; font-size: 16px; }
+        #btn { padding: 12px 24px; border-radius: 8px; border: none; background: #3b82f6; color: white; font-size: 16px; cursor: pointer; }
+        #log { margin-top: 20px; background: #1e293b; padding: 10px; border-radius: 8px; font-family: monospace; font-size: 12px; max-height: 200px; overflow-y: auto; }
+    </style>
+</head>
+<body>
+    <h1>🧪 Qwen-Claw МИНИМУМ</h1>
+    <p>БЕЗ внешних ресурсов. БЕЗ CDN. БЕЗ расширений.</p>
+    
+    <div id="chat">
+        <div class="msg bot">👋 Введите сообщение для теста.</div>
+    </div>
+    
+    <input type="text" id="input" placeholder="Введите сообщение...">
+    <button id="btn" onclick="send()">📤 Отправить</button>
+    
+    <div id="log"><strong>Лог:</strong><br><span id="log-content"></span></div>
+    
+    <script>
+        (function() {
+            'use strict';
+            
+            var logEl = document.getElementById('log-content');
+            var inputEl = document.getElementById('input');
+            var chatEl = document.getElementById('chat');
+            
+            function log(msg) {
+                logEl.innerHTML += '<br>' + escapeHtml(String(msg));
+                logEl.scrollTop = logEl.scrollHeight;
+                console.log(msg);
+            }
+            
+            function escapeHtml(text) {
+                var div = document.createElement('div');
+                div.textContent = text;
+                return div.innerHTML;
+            }
+            
+            log('=== ЗАГРУЗКА ===');
+            log('input element: ' + (inputEl ? 'найден' : 'НЕ НАЙДЕН'));
+            log('typeof send: ' + typeof send);
+            
+            window.send = function() {
+                log('=== send() ===');
+                
+                var msg = inputEl.value.trim();
+                log('message: "' + msg + '"');
+                
+                if (!msg) {
+                    log('❌ Пустое');
+                    return;
+                }
+                
+                chatEl.innerHTML += '<div class="msg user"><strong>Вы:</strong> ' + escapeHtml(msg) + '</div>';
+                inputEl.value = '';
+                log('📤 Отправка...');
+                
+                fetch('http://localhost:8085/api/chat', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({content: msg})
+                })
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    log('Status: ' + (data.response ? 'OK' : 'ERROR'));
+                    log('Ответ: ' + escapeHtml(data.response || 'нет ответа'));
+                    chatEl.innerHTML += '<div class="msg bot"><strong>Бот:</strong> ' + escapeHtml(data.response || 'нет ответа') + '</div>';
+                    chatEl.scrollTop = chatEl.scrollHeight;
+                })
+                .catch(function(e) {
+                    log('❌ Ошибка: ' + e.message);
+                    chatEl.innerHTML += '<div class="msg bot">❌ ' + escapeHtml(e.message) + '</div>';
+                    chatEl.scrollTop = chatEl.scrollHeight;
+                });
+            };
+            
+            inputEl.addEventListener('keydown', function(e) {
+                if (e.keyCode === 13) {
+                    e.preventDefault();
+                    send();
+                }
+            });
+            
+            log('=== ГОТОВО ===');
+        })();
+    </script>
+</body>
+</html>

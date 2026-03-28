@@ -1,0 +1,124 @@
+// Protocol Buffers для Qwen-Claw LLM Proxy Service
+// Версия: 1.0.0
+
+syntax = "proto3";
+
+package qwenclaw.llm.v1;
+
+option go_package = "github.com/user/qwen-claw/pkg/api/proto";
+
+// ============================================
+// LLM Proxy Service
+// ============================================
+
+service LLMProxy {
+    // Chat completion
+    rpc ChatCompletion(ChatRequest) returns (ChatResponse);
+    
+    // Streaming completion
+    rpc StreamCompletion(StreamRequest) returns (stream ChatToken);
+    
+    // Получить доступные модели
+    rpc ListModels(Empty) returns (ModelList);
+    
+    // Получить статус сервиса
+    rpc GetStatus(Empty) returns (ServiceStatus);
+}
+
+// ============================================
+// Запросы и ответы
+// ============================================
+
+// Запрос на chat completion
+message ChatRequest {
+    string model = 1;
+    repeated ChatMessage messages = 2;
+    float temperature = 3;
+    int32 max_tokens = 4;
+    float top_p = 5;
+    int32 n = 6;
+    bool stream = 7;
+    repeated string stop = 8;
+    float presence_penalty = 9;
+    float frequency_penalty = 10;
+    map<string, string> metadata = 11;
+}
+
+// Запрос на streaming completion
+message StreamRequest {
+    string model = 1;
+    repeated ChatMessage messages = 2;
+    float temperature = 3;
+    int32 max_tokens = 4;
+}
+
+// Сообщение чата
+message ChatMessage {
+    string role = 1; // system/user/assistant
+    string content = 2;
+    string name = 3;
+}
+
+// Ответ на chat completion
+message ChatResponse {
+    string id = 1;
+    string model = 2;
+    int64 created = 3;
+    ChatChoice choice = 4;
+    Usage usage = 5;
+    map<string, string> metadata = 6;
+}
+
+// Выбор ответа
+message ChatChoice {
+    int32 index = 1;
+    ChatMessage message = 2;
+    string finish_reason = 3;
+}
+
+// Использование токенов
+message Usage {
+    int32 prompt_tokens = 1;
+    int32 completion_tokens = 2;
+    int32 total_tokens = 3;
+}
+
+// Токен ответа (streaming)
+message ChatToken {
+    string id = 1;
+    string model = 2;
+    int64 created = 3;
+    StreamChoice delta = 4;
+    string finish_reason = 5;
+}
+
+// Выбор ответа (streaming)
+message StreamChoice {
+    string content = 1;
+    string role = 2;
+}
+
+// Список моделей
+message ModelList {
+    repeated ModelInfo models = 1;
+}
+
+// Информация о модели
+message ModelInfo {
+    string id = 1;
+    string name = 2;
+    string provider = 3;
+    int32 max_tokens = 4;
+    bool supports_streaming = 5;
+}
+
+// Статус сервиса
+message ServiceStatus {
+    bool healthy = 1;
+    string version = 2;
+    repeated string available_providers = 3;
+    int32 active_requests = 4;
+}
+
+// Пустое сообщение
+message Empty {}

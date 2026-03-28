@@ -1,0 +1,41 @@
+# Prometheus конфигурация для Qwen-Claw
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # Prometheus сам себя
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # API Gateway
+  - job_name: 'api-gateway'
+    static_configs:
+      - targets: ['api-gateway:58080']
+    metrics_path: /metrics
+
+  # Session & Memory Service
+  - job_name: 'session-memory'
+    static_configs:
+      - targets: ['session-memory:55051']
+    metrics_path: /metrics
+
+  # Qwen Wrapper Service
+  - job_name: 'qwen-wrapper'
+    static_configs:
+      - targets: ['qwen-wrapper:55052']
+    metrics_path: /metrics
+
+  # LLM Proxy Service
+  - job_name: 'llm-proxy'
+    static_configs:
+      - targets: ['llm-proxy:55053']
+    metrics_path: /metrics
+
+  # Tools Executor Service
+  - job_name: 'tools-executor'
+    static_configs:
+      - targets: ['tools-executor:55054']
+    metrics_path: /metrics

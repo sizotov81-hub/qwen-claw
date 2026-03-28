@@ -1,0 +1,65 @@
+# Dockerfile для Tools Executor Service
+# Многоэтапная сборка для минимизации размера образа
+
+# ============================================
+# Этап 1: Сборка
+# ============================================
+FROM golang:1.25-alpine AS builder
+
+WORKDIR /build
+
+# Установка зависимостей
+RUN apk add --no-cache git ca-certificates
+
+# Копирование common модуля
+COPY services/common /build/services/common
+RUN cd /build/services/common && go mod download
+
+# Копирование сервиса
+COPY cmd/tools-executor /build/cmd/tools-executor
+WORKDIR /build/cmd/tools-executor
+
+# Сборка
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /build/tools-executor .
+
+# ============================================
+# Этап 2: Runtime
+# ============================================
+FROM alpine:3.19
+
+WORKDIR /app
+
+# Установка корневых сертификатов и базовых утилит
+RUN apk --no-cache add ca-certificates tzdata bash docker-cli
+
+# Создание non-root пользователя
+RUN addgroup -g 1000 qwenclaw && \
+    adduser -D -u 1000 -G qwenclaw qwenclaw
+
+# Копирование бинарника
+COPY --from=builder /build/tools-executor /app/tools-executor
+
+# Настройка прав
+RUN chown -R qwenclaw:qwenclaw /app
+USER qwenclaw
+
+# Переменные окружения
+ENV SERVICE_NAME=tools-executor
+ENV GRPC_PORT=55054
+ENV HTTP_PORT=58084
+ENV METRICS_PORT=59094
+ENV HOST=0.0.0.0
+ENV LOG_LEVEL=info
+ENV LOG_FORMAT=json
+ENV SANDBOX_MODE=docker
+
+# Порты
+EXPOSE 55054 58084 59094
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD wget --no-verbose --tries=1 --spider http://localhost:58084/health || exit 1
+
+# Запуск
+ENTRYPOINT ["/app/tools-executor"]
+CMD ["--grpc-port=55054", "--http-port=58084", "--host=0.0.0.0"]

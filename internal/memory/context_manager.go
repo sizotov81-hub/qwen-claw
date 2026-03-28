@@ -113,7 +113,6 @@ func NewContextManager(config *ContextConfig) *ContextManager {
 // AddToken добавляет токен в контекст
 func (m *ContextManager) AddToken(token ContextToken) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 
 	// Оцениваем количество токенов (примерно: 1 токен = 4 символа)
 	if token.Tokens == 0 {
@@ -122,23 +121,46 @@ func (m *ContextManager) AddToken(token ContextToken) error {
 
 	// Проверяем не переполнится ли контекст
 	if m.currentTokens+token.Tokens > m.config.MaxTokens {
+		m.mu.Unlock()
 		// Пытаемся освободить место
 		if err := m.makeRoom(token.Tokens); err != nil {
 			return fmt.Errorf("context overflow: %w", err)
 		}
+		m.mu.Lock()
 	}
 
 	m.tokens = append(m.tokens, token)
 	m.currentTokens += token.Tokens
 
-	// Проверяем статус
-	status := m.GetStatus()
-	if status != ContextStatusNormal && m.onWarning != nil {
-		usage := float64(m.currentTokens) / float64(m.config.MaxTokens)
-		m.onWarning(status, usage)
+	// Проверяем статус (нужно пересчитать после добавления)
+	usage := float64(m.currentTokens) / float64(m.config.MaxTokens)
+	status := m.getStatusUnsafe()
+	
+	onWarning := m.onWarning
+	m.mu.Unlock()
+
+	// Вызываем callback вне lock чтобы избежать deadlock
+	if status != ContextStatusNormal && onWarning != nil {
+		onWarning(status, usage)
 	}
 
 	return nil
+}
+
+// getStatusUnsafe возвращает статус без захвата lock (должен вызываться с захваченным lock)
+func (m *ContextManager) getStatusUnsafe() ContextStatus {
+	usage := float64(m.currentTokens) / float64(m.config.MaxTokens)
+
+	if usage >= m.config.OverflowThreshold {
+		return ContextStatusOverflow
+	}
+	if usage >= m.config.CriticalThreshold {
+		return ContextStatusCritical
+	}
+	if usage >= m.config.WarningThreshold {
+		return ContextStatusWarning
+	}
+	return ContextStatusNormal
 }
 
 // AddMessage добавляет сообщение в контекст

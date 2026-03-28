@@ -1,0 +1,53 @@
+# ConfigMap для Qwen-Claw сервисов
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: qwen-claw-config
+  namespace: qwen-claw
+  labels:
+    app: qwen-claw
+data:
+  LOG_LEVEL: "info"
+  LOG_FORMAT: "json"
+  
+  # Database
+  DATABASE_URL: "postgres://qwenclaw:$(DB_PASSWORD)@postgres:5432/qwenclaw?sslmode=disable"
+  DATABASE_MAX_OPEN_CONNS: "25"
+  DATABASE_MAX_IDLE_CONNS: "5"
+  DATABASE_CONN_MAX_LIFETIME: "5m"
+  
+  # Redis
+  REDIS_URL: "redis://redis:6379"
+  REDIS_MAX_RETRIES: "3"
+  REDIS_POOL_SIZE: "10"
+  
+  # RabbitMQ
+  RABBITMQ_URL: "amqp://$(RABBITMQ_USER):$(RABBITMQ_PASSWORD)@rabbitmq:5672/"
+  RABBITMQ_PREFETCH: "10"
+  RABBITMQ_RECONNECT_DELAY: "5s"
+  
+  # gRPC
+  GRPC_TIMEOUT: "30s"
+  GRPC_MAX_RETRIES: "3"
+  GRPC_RETRY_BACKOFF: "100ms"
+  
+  # Circuit Breaker
+  CB_FAILURE_THRESHOLD: "5"
+  CB_SUCCESS_THRESHOLD: "3"
+  CB_TIMEOUT: "30s"
+  CB_HALF_OPEN_MAX_CALLS: "3"
+  
+  # Rate Limiting
+  RATE_LIMIT_ENABLED: "true"
+  RATE_LIMIT_RPS: "100"
+  RATE_LIMIT_BURST: "200"
+  
+  # Tracing
+  TRACING_ENABLED: "true"
+  JAEGER_ENDPOINT: "jaeger:4317"
+  TRACING_SAMPLING_RATIO: "1.0"
+  
+  # Metrics
+  METRICS_ENABLED: "true"
+  METRICS_PORT: "59090"
+  METRICS_PATH: "/metrics"

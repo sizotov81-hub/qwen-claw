@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Мини-тест</title>
+    <style>
+        body { background: #0f172a; color: white; padding: 50px; font-family: Arial; }
+        input { width: 300px; padding: 12px; border-radius: 8px; border: 1px solid #334155; background: #1e293b; color: white; font-size: 16px; }
+        button { padding: 12px 24px; border-radius: 8px; border: none; background: #3b82f6; color: white; font-size: 16px; cursor: pointer; }
+        #result { margin-top: 20px; padding: 20px; background: #1e293b; border-radius: 8px; }
+    </style>
+</head>
+<body>
+    <h1>🧪 Мини-тест</h1>
+    <p>Если видите это - HTML работает!</p>
+    
+    <input type="text" id="msg" placeholder="Введите сообщение...">
+    <button onclick="send()">📤 Отправить</button>
+    
+    <div id="result">Ожидание...</div>
+    
+    <script>
+        console.log('=== СКРИПТ ЗАГРУЖЕН ===');
+        
+        async function send() {
+            console.log('send() вызван!');
+            const msg = document.getElementById('msg').value;
+            document.getElementById('result').innerHTML = '📤 Отправка: ' + msg;
+            
+            try {
+                const resp = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({content: msg})
+                });
+                
+                const data = await resp.json();
+                console.log('Ответ:', data);
+                document.getElementById('result').innerHTML = '✅ Ответ: ' + (data.response || 'OK');
+            } catch (e) {
+                console.error('Ошибка:', e);
+                document.getElementById('result').innerHTML = '❌ Ошибка: ' + e.message;
+            }
+        }
+        
+        // Проверяем что функции доступны глобально
+        window.testFunc = function() {
+            console.log('✅ testFunc работает!');
+            return true;
+        };
+        
+        console.log('=== ГОТОВО ===');
+        console.log('typeof send:', typeof send);
+        console.log('window.testFunc:', typeof window.testFunc);
+    </script>
+</body>
+</html>

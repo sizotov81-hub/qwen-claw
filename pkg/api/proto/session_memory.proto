@@ -1,0 +1,143 @@
+// Protocol Buffers для Qwen-Claw Session & Memory Service
+// Версия: 1.0.0
+
+syntax = "proto3";
+
+package qwenclaw.session.v1;
+
+option go_package = "github.com/user/qwen-claw/pkg/api/proto";
+
+import "pkg/api/proto/common.proto";
+
+// ============================================
+// Session Memory Service
+// ============================================
+
+service SessionMemory {
+    // Создать сессию
+    rpc CreateSession(CreateSessionRequest) returns (Session);
+    
+    // Получить сессию
+    rpc GetSession(SessionID) returns (Session);
+    
+    // Обновить сессию
+    rpc UpdateSession(UpdateSessionRequest) returns (Session);
+    
+    // Удалить сессию
+    rpc DeleteSession(SessionID) returns (OperationStatus);
+    
+    // Добавить сообщение в сессию
+    rpc AddMessage(AddMessageRequest) returns (Message);
+    
+    // Получить сообщения сессии
+    rpc GetMessages(GetMessagesRequest) returns (MessageList);
+    
+    // Добавить запись в память
+    rpc AddMemory(MemoryEntry) returns (MemoryEntry);
+    
+    // Поиск в памяти
+    rpc SearchMemory(SearchMemoryRequest) returns (MemoryList);
+    
+    // Получить записи памяти по сессии
+    rpc GetSessionMemory(SessionID) returns (MemoryList);
+}
+
+// ============================================
+// Запросы и ответы
+// ============================================
+
+// Запрос на создание сессии
+message CreateSessionRequest {
+    string user_id = 1;
+    string title = 2;
+    map<string, string> metadata = 3;
+}
+
+// Сессия
+message Session {
+    string id = 1;
+    string user_id = 2;
+    string title = 3;
+    int64 created_at = 4;
+    int64 updated_at = 5;
+    int64 last_accessed_at = 6;
+    map<string, string> metadata = 7;
+    int32 message_count = 8;
+    int32 total_tokens = 9;
+}
+
+// Запрос на обновление сессии
+message UpdateSessionRequest {
+    string id = 1;
+    string title = 2;
+    map<string, string> metadata = 3;
+}
+
+// Запрос на добавление сообщения
+message AddMessageRequest {
+    string session_id = 1;
+    string role = 2; // user/assistant/system
+    string content = 3;
+    int32 tokens = 4;
+    map<string, string> metadata = 5;
+}
+
+// Сообщение
+message Message {
+    string id = 1;
+    string session_id = 2;
+    string role = 3;
+    string content = 4;
+    int32 tokens = 5;
+    int64 created_at = 6;
+    map<string, string> metadata = 7;
+}
+
+// Запрос на получение сообщений
+message GetMessagesRequest {
+    string session_id = 1;
+    int32 limit = 2;
+    int32 offset = 3;
+    string order = 4; // asc/desc
+}
+
+// Список сообщений
+message MessageList {
+    repeated Message messages = 1;
+    int32 total_count = 2;
+}
+
+// Запись памяти
+message MemoryEntry {
+    string id = 1;
+    string session_id = 2;
+    string user_id = 3;
+    string type = 4; // working/episodic/semantic/procedural
+    string category = 5;
+    string content = 6;
+    bytes embedding = 7; // векторное представление
+    float importance = 8;
+    float retention = 9;
+    int64 created_at = 10;
+    int64 updated_at = 11;
+    int64 last_accessed_at = 12;
+    int32 access_count = 13;
+    map<string, string> metadata = 14;
+}
+
+// Запрос на поиск в памяти
+message SearchMemoryRequest {
+    string user_id = 1;
+    string query = 2;
+    bytes query_embedding = 3;
+    string type = 4;
+    string category = 5;
+    int32 limit = 6;
+    float min_similarity = 7;
+}
+
+// Список записей памяти
+message MemoryList {
+    repeated MemoryEntry entries = 1;
+    int32 total_count = 2;
+}

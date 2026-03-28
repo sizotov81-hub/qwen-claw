@@ -1,0 +1,74 @@
+// Protocol Buffers для Qwen-Claw Qwen Wrapper Service
+// Версия: 1.0.0
+
+syntax = "proto3";
+
+package qwenclaw.qwen.v1;
+
+option go_package = "github.com/user/qwen-claw/pkg/api/proto";
+
+// ============================================
+// Qwen Wrapper Service
+// ============================================
+
+service QwenWrapper {
+    // Выполнить запрос
+    rpc ExecuteQuery(QueryRequest) returns (QueryResponse);
+    
+    // Выполнить запрос с streaming ответом
+    rpc ExecuteQueryStream(QueryRequest) returns (stream Token);
+    
+    // Продолжить сессию
+    rpc ContinueSession(ContinueRequest) returns (stream Token);
+    
+    // Получить статус сервиса
+    rpc GetStatus(Empty) returns (ServiceStatus);
+}
+
+// ============================================
+// Запросы и ответы
+// ============================================
+
+// Запрос на выполнение
+message QueryRequest {
+    string session_id = 1;
+    string query = 2;
+    string model = 3;
+    string approval_mode = 4; // plan/default/auto-edit/yolo
+    int64 timeout = 5;
+    map<string, string> options = 6;
+}
+
+// Запрос на продолжение сессии
+message ContinueRequest {
+    string session_id = 1;
+    string content = 2;
+}
+
+// Ответ на запрос
+message QueryResponse {
+    string content = 1;
+    int32 tokens_used = 2;
+    string model = 3;
+    int64 duration_ms = 4;
+    map<string, string> metadata = 5;
+}
+
+// Токен ответа (streaming)
+message Token {
+    string content = 1;
+    bool is_final = 2;
+    int32 tokens_total = 3;
+}
+
+// Статус сервиса
+message ServiceStatus {
+    bool healthy = 1;
+    string version = 2;
+    string qwen_path = 3;
+    bool qwen_available = 4;
+    int32 active_sessions = 5;
+}
+
+// Пустое сообщение
+message Empty {}

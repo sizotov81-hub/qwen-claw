@@ -1,0 +1,230 @@
+# Docker Compose для независимых микросервисов Qwen-Claw
+# Каждый сервис автономен и может запускаться отдельно
+
+version: '3.8'
+
+services:
+  # ============================================
+  # API Gateway
+  # ============================================
+  api-gateway:
+    build:
+      context: ../..
+      dockerfile: deployments/docker/services/Dockerfile.api-gateway
+    container_name: qwen-claw-api-gateway
+    environment:
+      - SERVICE_NAME=api-gateway
+      - GRPC_PORT=55050
+      - HTTP_PORT=58080
+      - METRICS_PORT=59090
+      - HOST=0.0.0.0
+      - LOG_LEVEL=info
+      - LOG_FORMAT=json
+    ports:
+      - "55050:55050"  # gRPC
+      - "58080:58080"    # HTTP
+      - "59090:59090"    # Metrics
+    depends_on:
+      - session-memory
+      - qwen-wrapper
+      - llm-proxy
+      - tools-executor
+    networks:
+      - qwen-claw-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:58080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # ============================================
+  # Session Memory
+  # ============================================
+  session-memory:
+    build:
+      context: ../..
+      dockerfile: deployments/docker/services/Dockerfile.session-memory
+    container_name: qwen-claw-session-memory
+    environment:
+      - SERVICE_NAME=session-memory
+      - GRPC_PORT=55051
+      - HTTP_PORT=58081
+      - METRICS_PORT=59091
+      - HOST=0.0.0.0
+      - LOG_LEVEL=info
+      - LOG_FORMAT=json
+      - DATABASE_URL=postgres://qwenclaw:password@postgres:5432/qwenclaw?sslmode=disable
+      - REDIS_URL=redis://redis:6379
+    ports:
+      - "55051:55051"  # gRPC
+      - "58081:58081"    # HTTP
+      - "59091:59091"    # Metrics
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - qwen-claw-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:58081/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # ============================================
+  # Qwen Wrapper
+  # ============================================
+  qwen-wrapper:
+    build:
+      context: ../..
+      dockerfile: deployments/docker/services/Dockerfile.qwen-wrapper
+    container_name: qwen-claw-qwen-wrapper
+    environment:
+      - SERVICE_NAME=qwen-wrapper
+      - GRPC_PORT=55052
+      - HTTP_PORT=58082
+      - METRICS_PORT=59092
+      - HOST=0.0.0.0
+      - LOG_LEVEL=info
+      - LOG_FORMAT=json
+      - QWEN_PATH=/usr/local/bin/qwen
+    ports:
+      - "55052:55052"  # gRPC
+      - "58082:58082"    # HTTP
+      - "59092:59092"    # Metrics
+    networks:
+      - qwen-claw-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:58082/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # ============================================
+  # LLM Proxy
+  # ============================================
+  llm-proxy:
+    build:
+      context: ../..
+      dockerfile: deployments/docker/services/Dockerfile.llm-proxy
+    container_name: qwen-claw-llm-proxy
+    environment:
+      - SERVICE_NAME=llm-proxy
+      - GRPC_PORT=55053
+      - HTTP_PORT=58083
+      - METRICS_PORT=59093
+      - HOST=0.0.0.0
+      - LOG_LEVEL=info
+      - LOG_FORMAT=json
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY:-}
+    ports:
+      - "55053:55053"  # gRPC
+      - "58083:58083"    # HTTP
+      - "59093:59093"    # Metrics
+    networks:
+      - qwen-claw-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:58083/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # ============================================
+  # Tools Executor
+  # ============================================
+  tools-executor:
+    build:
+      context: ../..
+      dockerfile: deployments/docker/services/Dockerfile.tools-executor
+    container_name: qwen-claw-tools-executor
+    environment:
+      - SERVICE_NAME=tools-executor
+      - GRPC_PORT=55054
+      - HTTP_PORT=58084
+      - METRICS_PORT=59094
+      - HOST=0.0.0.0
+      - LOG_LEVEL=info
+      - LOG_FORMAT=json
+      - SANDBOX_MODE=docker
+    ports:
+      - "55054:55054"  # gRPC
+      - "58084:58084"    # HTTP
+      - "59094:59094"    # Metrics
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - qwen-claw-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:58084/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # ============================================
+  # Инфраструктура
+  # ============================================
+
+  # PostgreSQL с pgVector
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: qwen-claw-postgres
+    environment:
+      POSTGRES_USER: qwenclaw
+      POSTGRES_PASSWORD: qwenclaw_password
+      POSTGRES_DB: qwenclaw
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - qwen-claw-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U qwenclaw"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis для кэша
+  redis:
+    image: redis:7-alpine
+    container_name: qwen-claw-redis
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - qwen-claw-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+# Сети
+networks:
+  qwen-claw-net:
+    driver: bridge
+    name: qwen-claw-network
+
+# Тома
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local

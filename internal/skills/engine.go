@@ -20,6 +20,15 @@ const (
 	SkillTypeScript   SkillType = "script"
 )
 
+// Info информация о навыке (алиас для совместимости)
+type Info = Skill
+
+// Request запрос к навыку (алиас для совместимости)
+type Request = SkillRequest
+
+// Response результат выполнения навыка (алиас для совместимости)
+type Response = SkillResult
+
 // Skill определение навыка
 type Skill struct {
 	// Name имя навыка

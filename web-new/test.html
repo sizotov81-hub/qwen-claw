@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Тест отправки сообщений</title>
+    <style>
+        body { font-family: Arial; background: #0f172a; color: white; padding: 20px; }
+        #messages { border: 1px solid #334155; padding: 20px; margin-bottom: 20px; min-height: 200px; }
+        .message { margin: 10px 0; padding: 10px; border-radius: 8px; }
+        .user { background: #3b82f6; }
+        .assistant { background: #334155; }
+        input { width: 70%; padding: 10px; border-radius: 8px; border: 1px solid #334155; background: #1e293b; color: white; }
+        button { padding: 10px 20px; border-radius: 8px; border: none; background: #3b82f6; color: white; cursor: pointer; }
+        button:hover { background: #2563eb; }
+    </style>
+</head>
+<body>
+    <h1>🧪 Тест отправки сообщений</h1>
+    <div id="messages"></div>
+    <input type="text" id="msg" placeholder="Введите сообщение..." onkeydown="if(event.keyCode===13)send()">
+    <button onclick="send()">Отправить</button>
+    <p id="status"></p>
+    
+    <script>
+        function append(role, text) {
+            const div = document.createElement('div');
+            div.className = `message ${role}`;
+            div.textContent = text;
+            document.getElementById('messages').appendChild(div);
+        }
+        
+        async function send() {
+            const input = document.getElementById('msg');
+            const message = input.value.trim();
+            if (!message) return;
+            
+            append('user', message);
+            input.value = '';
+            document.getElementById('status').textContent = 'Отправка...';
+            
+            try {
+                const response = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({content: message})
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    append('assistant', data.response || 'OK');
+                    document.getElementById('status').textContent = '✅ Успешно!';
+                } else {
+                    append('assistant', '❌ Ошибка: ' + response.status);
+                    document.getElementById('status').textContent = 'Ошибка';
+                }
+            } catch (e) {
+                append('assistant', '❌ ' + e.message);
+                document.getElementById('status').textContent = 'Ошибка соединения';
+            }
+        }
+    </script>
+</body>
+</html>
