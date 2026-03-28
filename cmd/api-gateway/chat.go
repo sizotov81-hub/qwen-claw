@@ -11,6 +11,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/user/qwen-claw-common/logging"
 )
 
 // ChatHandler обработчик chat запросов
@@ -65,35 +67,39 @@ func (h *ChatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Парсим запрос
 	var req ChatRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		logging.Warnw("Invalid chat request", "error", err)
 		json.NewEncoder(w).Encode(map[string]string{
 			"error": fmt.Sprintf("Invalid request: %v", err),
 		})
 		return
 	}
 
-	fmt.Printf("[CHAT] Request: session=%s, content=%q, model=%s\n", req.SessionID, req.Content, req.Model)
+	logging.Infow("Chat request received",
+		"session_id", req.SessionID,
+		"content", req.Content,
+		"model", req.Model,
+	)
 
 	// Отправляем запрос в Qwen Wrapper
 	response, err := h.callQwenWrapper(req)
 	if err != nil {
+		logging.Errorw("Qwen Wrapper call failed", "error", err)
 		json.NewEncoder(w).Encode(map[string]string{
 			"response": fmt.Sprintf("❌ Error: %v", err),
 		})
 		return
 	}
 
-	fmt.Printf("[CHAT] Response: %q\n", response)
+	logging.Infow("Chat response sent", "response_length", len(response))
 
 	json.NewEncoder(w).Encode(ChatResponse{Response: response})
 }
 
 // callQwenWrapper отправляет запрос в Qwen Wrapper Service
 func (h *ChatHandler) callQwenWrapper(req ChatRequest) (string, error) {
-	// Создаём запрос к Qwen Wrapper через gRPC (заглушка)
-	// В реальной реализации нужно использовать gRPC клиент
-	
 	// Проверяем переменную окружения для тестового режима
 	if os.Getenv("QWEN_WRAPPER_MOCK") == "true" {
+		logging.Debug("Using mock mode for Qwen Wrapper")
 		return h.mockResponse(req.Content), nil
 	}
 
@@ -107,11 +113,19 @@ func (h *ChatHandler) callQwenWrapper(req ChatRequest) (string, error) {
 		"session": req.SessionID,
 	}
 
-	jsonPayload, _ := json.Marshal(payload)
+	jsonPayload, err := json.Marshal(payload)
+	if err != nil {
+		logging.Errorw("Failed to marshal chat request", "error", err)
+		return "", fmt.Errorf("marshal error: %w", err)
+	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", h.QwenWrapperURL+"/api/execute", bytes.NewBuffer(jsonPayload))
 	if err != nil {
-		return h.mockResponse(req.Content), nil
+		logging.Errorw("Failed to create HTTP request to Qwen Wrapper",
+			"url", h.QwenWrapperURL,
+			"error", err,
+		)
+		return "", fmt.Errorf("request creation error: %w", err)
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
@@ -119,17 +133,33 @@ func (h *ChatHandler) callQwenWrapper(req ChatRequest) (string, error) {
 	client := &http.Client{Timeout: h.Timeout}
 	resp, err := client.Do(httpReq)
 	if err != nil {
-		return h.mockResponse(req.Content), nil
+		logging.Errorw("Qwen Wrapper HTTP request failed",
+			"url", h.QwenWrapperURL,
+			"timeout", h.Timeout,
+			"error", err,
+		)
+		return "", fmt.Errorf("HTTP request error: %w", err)
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode != http.StatusOK {
+		logging.Warnw("Qwen Wrapper returned non-OK status",
+			"status", resp.StatusCode,
+		)
+	}
+
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", err
+		logging.Errorw("Failed to read Qwen Wrapper response", "error", err)
+		return "", fmt.Errorf("read response error: %w", err)
 	}
 
 	var result map[string]interface{}
 	if err := json.Unmarshal(body, &result); err != nil {
+		logging.Warnw("Failed to unmarshal Qwen Wrapper response, returning raw",
+			"error", err,
+			"body_length", len(body),
+		)
 		return string(body), nil
 	}
 
@@ -140,6 +170,7 @@ func (h *ChatHandler) callQwenWrapper(req ChatRequest) (string, error) {
 		return content, nil
 	}
 
+	logging.Debug("No response/content field in Qwen Wrapper result, returning raw body")
 	return string(body), nil
 }
 
